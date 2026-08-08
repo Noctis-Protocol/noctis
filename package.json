@@ -1,0 +1,42 @@
+{
+  "name": "noctis",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Noctis — private Uniswap desk with ZAMA FHE vault balances and intents",
+  "author": "Noctis Protocol",
+  "license": "MIT",
+  "scripts": {
+    "protocol:compile": "npm --prefix noctis-protocol run compile",
+    "protocol:test": "npm --prefix noctis-protocol run test",
+    "frontend:dev": "npm --prefix frontend run dev",
+    "frontend:build": "npm --prefix frontend run build",
+    "frontend:lint": "npm --prefix frontend run lint",
+    "frontend:test": "npm --prefix frontend run test -- --run",
+    "keeper:dev": "npm --prefix keeper run dev",
+    "keeper:start": "npm --prefix keeper run start",
+    "keeper:typecheck": "npm --prefix keeper run typecheck",
+    "ci:protocol": "npm run protocol:compile && npm run protocol:test",
+    "ci:frontend": "npm run frontend:lint && npm run frontend:build",
+    "ci:keeper": "npm run keeper:typecheck"
+  },
+  "keywords": [
+    "noctis",
+    "fhe",
+    "zama",
+    "uniswap",
+    "ethereum",
+    "privacy",
+    "defi"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Noctis-Protocol/noctis.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Noctis-Protocol/noctis/issues"
+  },
+  "homepage": "https://github.com/Noctis-Protocol/noctis#readme",
+  "engines": {
+    "node": ">=20"
+  }
+}

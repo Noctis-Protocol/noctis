@@ -1,0 +1,186 @@
+"""
+Noctis Protocol Subgraph Schema
+
+Indexes all on-chain activity:
+- Deposits (ETH/USDT)
+- Withdrawals (encrypted)
+- Orders (market orders)
+"""
+
+# Token types supported by Noctis
+enum TokenType {
+  ETH
+  USDT
+}
+
+# Deposit entity - tracks all vault deposits
+type Deposit @entity {
+  # Unique ID: {txHash}-{logIndex}
+  id: ID!
+  
+  # User info
+  depositor: Bytes!                    # Address of depositor (not indexed on-chain for privacy)
+  
+  # Asset info
+  token: TokenType!                    # ETH or USDT
+  amount: BigInt!                      # Raw amount (wei for ETH, 6 decimals for USDT)
+  amountFormatted: BigDecimal!         # Human-readable amount
+  
+  # Transaction metadata
+  timestamp: BigInt!                   # Unix timestamp
+  blockNumber: BigInt!                 # Block number
+  transactionHash: Bytes!              # Transaction hash
+  
+  # Relations
+  user: User!                          # Link to User entity
+}
+
+# Withdrawal status
+enum WithdrawalStatus {
+  PENDING
+  COMPLETED
+  CANCELLED
+}
+
+# Withdrawal entity - tracks all withdrawal requests
+type Withdrawal @entity {
+  # Unique ID: {requestId}
+  id: ID!
+  
+  # Request info
+  requestId: BigInt!                   # Unique request ID
+  user: Bytes!                         # User address
+  
+  # Asset info
+  token: TokenType                     # ETH or USDT (derived from isEth)
+  amount: BigInt                       # Withdrawn amount (only known after execution)
+  amountFormatted: BigDecimal          # Human-readable amount
+  
+  # Status
+  status: WithdrawalStatus!            # Current status
+  isEth: Boolean                       # true = ETH, false = USDT (if available)
+  
+  # Transaction metadata
+  timestamp: BigInt!                   # Request timestamp
+  blockNumber: BigInt!                 # Request block number
+  transactionHash: Bytes!              # Request transaction hash
+  
+  # Completion info (null if pending)
+  completedAt: BigInt                  # Completion timestamp
+  completedTxHash: Bytes               # Completion transaction hash
+  
+  # Cancellation info (null if not cancelled)
+  cancelledAt: BigInt                  # Cancellation timestamp
+  cancelledTxHash: Bytes               # Cancellation transaction hash
+  
+  # Relations
+  userEntity: User!                    # Link to User entity
+}
+
+# Order type
+enum OrderType {
+  MARKET
+  LIMIT
+}
+
+# Order status
+enum OrderStatus {
+  PENDING
+  FILLED
+  CANCELLED
+  EXPIRED
+}
+
+# Order entity - tracks all trading orders
+# PRIVACY-FIRST: No trader addresses are indexed (they are encrypted on-chain)
+type Order @entity {
+  # Unique ID: {orderId}
+  id: ID!
+  
+  # Order identification
+  orderId: BigInt!                     # Unique order ID
+  # NOTE: trader address is NOT indexed for privacy (encrypted in contract)
+  
+  # Order details
+  isBuy: Boolean!                      # true = Buy ETH, false = Sell ETH
+  orderType: OrderType!                # MARKET or LIMIT
+  # NOTE: amounts are NOT indexed for privacy (encrypted in contract)
+  
+  # Status & lifecycle
+  status: OrderStatus!                 # Current status
+  createdAt: BigInt!                   # Creation timestamp
+  createdBlock: BigInt!                # Creation block number
+  createdTxHash: Bytes!                # Creation transaction hash
+  
+  # Execution info (null if not filled)
+  filledAt: BigInt                     # Execution timestamp
+  filledBlock: BigInt                  # Execution block number
+  filledTxHash: Bytes                  # Execution transaction hash
+  # NOTE: matchedOrderId and counterparty are NOT indexed for privacy
+  
+  # Swap execution info (user-initiated flow)
+  swapRequested: Boolean               # User requested swap execution
+  swapRequestedAt: BigInt              # When swap was requested
+  
+  # Cancellation info (null if not cancelled)
+  cancelledAt: BigInt                  # Cancellation timestamp
+  cancelledTxHash: Bytes               # Cancellation transaction hash
+}
+
+# User entity - aggregates user activity
+# NOTE: User data is derived from deposit events only (which are public)
+# Order activity is NOT linked to users for privacy
+type User @entity {
+  # Unique ID: {address}
+  id: ID!
+  
+  # User address (from deposit events - already public on-chain)
+  address: Bytes!                      # Ethereum address
+  
+  # Activity statistics (deposits/withdrawals only - orders are private)
+  totalDeposits: Int!                  # Total number of deposits
+  totalWithdrawals: Int!               # Total number of withdrawals
+  # NOTE: totalOrders is NOT tracked for privacy
+  
+  # Volume statistics (deposits - withdrawals)
+  totalDepositedETH: BigDecimal!       # Total ETH deposited
+  totalDepositedUSDT: BigDecimal!      # Total USDT deposited
+  totalWithdrawnETH: BigDecimal!       # Total ETH withdrawn
+  totalWithdrawnUSDT: BigDecimal!      # Total USDT withdrawn
+  netBalanceETH: BigDecimal!           # Net ETH balance (deposits - withdrawals)
+  netBalanceUSDT: BigDecimal!          # Net USDT balance (deposits - withdrawals)
+  
+  # Activity timestamps
+  firstSeenAt: BigInt!                 # First activity timestamp
+  lastSeenAt: BigInt!                  # Last activity timestamp
+  
+  # Relations (deposits/withdrawals only)
+  deposits: [Deposit!]! @derivedFrom(field: "user")
+  withdrawals: [Withdrawal!]! @derivedFrom(field: "userEntity")
+  # NOTE: orders are NOT linked for privacy
+}
+
+# Global statistics - singleton entity
+type GlobalStats @entity {
+  # Singleton ID: "global"
+  id: ID!
+  
+  # User metrics
+  totalUsers: Int!                     # Total unique users
+  
+  # Deposit metrics
+  totalDeposits: Int!                  # Total number of deposits
+  totalDepositedETH: BigDecimal!       # Total ETH deposited
+  totalDepositedUSDT: BigDecimal!      # Total USDT deposited
+  
+  # Withdrawal metrics
+  totalWithdrawals: Int!               # Total number of withdrawals
+  
+  # Order metrics
+  totalOrders: Int!                    # Total number of orders
+  totalOrdersFilled: Int!              # Total filled orders
+  totalOrdersCancelled: Int!           # Total cancelled orders
+  
+  # Activity timestamps
+  lastUpdatedAt: BigInt!               # Last update timestamp
+}

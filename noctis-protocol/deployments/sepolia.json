@@ -1,0 +1,75 @@
+{
+  "network": "sepolia",
+  "chainId": 11155111,
+  "updatedAt": "2026-08-08",
+  "contracts": {
+    "NoctisVault": "0x6607cE016237C3D8969B318018604c09D16fdd03",
+    "NoctisExchange": "0xcF13F272cdc5684c3863b589C2a9fb14A0aa0362",
+    "USDT": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
+    "UniswapV2Router": "0xC532a74256D3Db42D0Bf7a0400fEFDbad7694008",
+    "EthUsdPriceFeed": "0x694AA1769357215DE4FAC081bf1f309aDC325306",
+    "SequencerUptimeFeed": "0x0000000000000000000000000000000000000000",
+    "feeRecipient": "0x24448B8c366b754E7B0a3F0D46cBCa62BD7beAb7",
+    "feeBps": 5,
+    "TimelockController": "0x6fa358E424341F60338620f26AB297553E551A7D"
+  },
+  "subgraph": {
+    "version": "v0.9.0",
+    "queryUrl": "https://api.studio.thegraph.com/query/1724540/noctis-protocol/v0.9.0",
+    "vaultStartBlock": 11445821,
+    "exchangeStartBlock": 11447982,
+    "studioUrl": "https://thegraph.com/studio/subgraph/noctis-protocol",
+    "name": "noctis-protocol"
+  },
+  "previous": {
+    "NoctisVault": "0x6607cE016237C3D8969B318018604c09D16fdd03",
+    "NoctisExchange": "0x26f430671554e69EaA9e15112dAb02239B124dCA",
+    "note": "Exchange redeployed (C-1/M-2/S-1 audit fixes; EIP-170 size trim to 23.1kb); vault unchanged",
+    "older": {
+      "NoctisVault": "0x6607cE016237C3D8969B318018604c09D16fdd03",
+      "NoctisExchange": "0xc5Ea0D51Cb25503832Dbe3A6a85C8d91ABb63140",
+      "note": "Exchange redeployed with EIP-170 size trim (~22.2kb); vault unchanged",
+      "older": {
+        "NoctisVault": "0x6607cE016237C3D8969B318018604c09D16fdd03",
+        "NoctisExchange": "0xd9bcCb942B3c92Cf20f50bB373145E59209ca19e",
+        "note": "Exchange redeployed with EIP-170 size trim (~22.2kb); vault unchanged",
+        "older": {
+          "NoctisExchange": "0x2fBA082FCa8aAB7669f2Fe7Ec7fE4B6b7F0022Ae",
+          "NoctisVault": "0x6607cE016237C3D8969B318018604c09D16fdd03",
+          "note": "Exchange upgraded for BUY /1e20 sufficiency fix; vault unchanged",
+          "older": {
+            "NoctisVault": "0xC1F412DF9e7Cc7a71b41a9a83eC552fD51a2e0E6",
+            "NoctisExchange": "0x59A2006aCca566BC487FCF406F68927269f7D5F9",
+            "note": "~119 USDC remains on older exchange (no rescueERC20 on that bytecode)"
+          }
+        }
+      }
+    }
+  },
+  "ops": {
+    "feeRecipientSafe": "0x24448B8c366b754E7B0a3F0D46cBCa62BD7beAb7",
+    "relayer": "0xB63063402eD60d4630bc575dEC5458CDB94d16D6",
+    "deployerAdmin": "0x0A8141174241824a0244889C6f846c3975aad8F7",
+    "note": "Exchange redeployed with C-1/M-2/S-1 audit fixes. Admin = Safe.",
+    "lastPauseDrillAt": "2026-08-08T15:32:24.892Z",
+    "lastPauseDrillPauseTx": "0x5b10a54b76c470bb943c1f253a590a0658d12fae178485c9fdcbd861a1f3d1cf",
+    "lastPauseDrillUnpauseTx": "0x7c96b001a456faaba3b092863bf71594c7b40549fd176b223406aeb132e088af",
+    "ownerSafe": "0x24448B8c366b754E7B0a3F0D46cBCa62BD7beAb7",
+    "ownershipTransferredAt": "2026-08-08T17:14:02.228Z",
+    "upgradedAt": "2026-08-08T21:54:50.032Z",
+    "timelock": "0x6fa358E424341F60338620f26AB297553E551A7D",
+    "timelockMinDelay": 300,
+    "timelockConfiguredAt": "2026-08-08T17:44:00.000Z",
+    "timelockPolicy": "Exchange PARAMS/GATEWAY via Timelock (Safe proposer+executor). Pause + feeRecipient + rescue remain Safe-instant. Vault keepers 48h / gateway 7d on-contract.",
+    "timelockSmokeScheduleTx": "0x08a5e32127bea98e0a3020b71a5020a915a836add649e080c4589ad1ab724a49",
+    "timelockSmokeExecuteTx": "0x659fbfa9a400468bf425202c273ae48a975159e625da7a238ff61179b8b8bc3f",
+    "timelockSmokeOperationId": "0xaa06fb9fc2220fa3a9710861dba86eb28c747668995cdf5fec2c385a0b55dcc9",
+    "lastPoolRebalanceAt": "2026-08-08T18:37:24.864Z",
+    "lastPoolRebalanceTx": "0x51259c41cdc4e3fcfafe3f257510f5dc6062c89512ba00d6b382d02ae78f9cb4",
+    "lastPoolRebalanceEthSold": "1.2",
+    "lastPoolSpotUsd": 2052.03,
+    "lastPoolOracleUsd": 1919.16,
+    "lastPoolGapBps": 692
+  },
+  "notes": "SSOT. Sync frontend/.env.local, keeper/.env, subgraph from this file."
+}

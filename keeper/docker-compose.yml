@@ -1,0 +1,81 @@
+# Persistent Sepolia desk stack (survives Cursor session kills)
+#   docker compose --profile monitor up -d --build
+#   docker compose --profile monitor logs -f
+#   docker compose --profile monitor down
+#
+# A4: keystore mounted read-only — do NOT bake keys into the image.
+#   keystores/keeper.json + KEYSTORE_PASSWORD in .env
+# Production: load KEYSTORE_PASSWORD from a secret manager (not plain .env).
+
+services:
+  relayer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: noctis-relayer
+    env_file:
+      - .env
+    environment:
+      - RELAYER_PORT=3001
+      - KEEPER_PRIVATE_KEY_FILE=/run/secrets/keeper.json
+      - REQUIRE_KEYSTORE=1
+      # Strip plaintext key inside the container even if present in .env
+      - KEEPER_PRIVATE_KEY=
+      - PRIVATE_KEY=
+      - EXPECTED_FEE_RECIPIENT=${EXPECTED_FEE_RECIPIENT:-}
+      - EXPECTED_RELAYER=${EXPECTED_RELAYER:-}
+      - MIN_KEEPER_ETH=${MIN_KEEPER_ETH:-0.01}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+    ports:
+      - "127.0.0.1:3001:3001"
+    restart: unless-stopped
+    volumes:
+      - ./logs:/app/logs
+      - ./keystores/keeper.json:/run/secrets/keeper.json:ro
+    networks:
+      - noctis-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/api/relay/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  monitor:
+    profiles: ["monitor"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: noctis-ops-monitor
+    command: ["npx", "tsx", "src/ops-monitor.ts"]
+    env_file:
+      - .env
+    environment:
+      - RELAYER_HEALTH_URL=http://relayer:3001/api/relay/health?deep=1
+      - MONITOR_RPC_URL=${MONITOR_RPC_URL:-https://ethereum-sepolia-rpc.publicnode.com}
+      - MONITOR_INTERVAL_MS=${MONITOR_INTERVAL_MS:-30000}
+      - MAX_FEE_SILENCE_HOURS=${MAX_FEE_SILENCE_HOURS:-0}
+      - USDT_ADDRESS=${USDT_ADDRESS:-0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238}
+      - ALERT_LOG_PATH=/app/logs/alerts.jsonl
+      - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL:-}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+      - ALERT_WEBHOOK_URL=${ALERT_WEBHOOK_URL:-}
+      # Monitor does not need the keeper private key
+      - KEEPER_PRIVATE_KEY=
+      - PRIVATE_KEY=
+      - KEEPER_PRIVATE_KEY_FILE=
+    volumes:
+      - ./logs:/app/logs
+    healthcheck:
+      disable: true
+    restart: unless-stopped
+    depends_on:
+      relayer:
+        condition: service_healthy
+    networks:
+      - noctis-network
+
+networks:
+  noctis-network:
+    driver: bridge

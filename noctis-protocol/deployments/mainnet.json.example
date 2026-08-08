@@ -1,0 +1,37 @@
+{
+  "network": "mainnet",
+  "chainId": 1,
+  "updatedAt": "YYYY-MM-DD",
+  "contracts": {
+    "NoctisVault": "0x…",
+    "NoctisExchange": "0x…",
+    "USDT": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "UniswapV2Router": "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
+    "EthUsdPriceFeed": "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419",
+    "SequencerUptimeFeed": "0x0000000000000000000000000000000000000000",
+    "feeRecipient": "0x…Safe…",
+    "feeBps": 5,
+    "TimelockController": "0x…"
+  },
+  "zama": {
+    "acl": "0xcA2E8f1F656CD25C01F05d0b243Ab1ecd4a8ffb6",
+    "coprocessor": "0xD82385dADa1ae3E969447f20A3164F6213100e75",
+    "kmsVerifier": "0x77627828a55156b04Ac0DC0eb30467f1a552BB03",
+    "relayerUrl": "https://relayer.mainnet.zama.org/v2",
+    "requiresFhevmSolidity": ">=0.11.1"
+  },
+  "ops": {
+    "softCaps": {
+      "maxDepositEth": "5",
+      "maxDepositUsdc": "20000",
+      "protocolTvlUsdSoft": "100000",
+      "note": "Ops pause if soft TVL breached; tighten via Safe."
+    },
+    "feeRecipientSafe": "",
+    "ownerSafe": "",
+    "relayer": "",
+    "timelockMinDelay": 172800,
+    "flashbots": true
+  },
+  "notes": "Copy to mainnet.json after deploy. Sync NEXT_PUBLIC_*_MAINNET + keeper prod env. See docs/D_PHASE_MAINNET_RUNBOOK.md."
+}

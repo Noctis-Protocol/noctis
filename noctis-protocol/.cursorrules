@@ -1,0 +1,11 @@
+# General Behavior
+- Always comment in English.
+- Write comments like a Senior Solidity Engineer: concise, technical, and focused on the "WHY" (design decisions, security), not the "HOW" (syntax).
+- Avoid "Tutorial style" comments (e.g., "Step 1: Do this", "Step 2: Do that").
+- Use standard NatSpec format for public functions but keep descriptions professional and direct.
+- Focus on Gas optimization, Security checks (CEI pattern), and FHE specific constraints in comments.
+-Don't create documentation if I have not asked
+
+# Solidity Specifics
+- Explicitly mention `euint128` vs `euint32` rationale when relevant.
+- Mark heavy FHE operations (decrypt) with gas warnings in comments.

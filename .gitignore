@@ -1,0 +1,73 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Testing / coverage
+coverage/
+
+# Next.js / builds
+.next/
+out/
+build/
+dist/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+!**/.env.example
+!**/.env.*.example
+*.pem
+*.key
+keystore/
+**/deployments/.*.key
+
+# IDE / local agent
+.vscode/
+.idea/
+.cursor/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Caches
+.cache/
+*.cache
+.eslintcache
+*.tsbuildinfo
+
+# Hardhat / EDR
+cache/
+artifacts/
+typechain-types/
+noctis-protocol/edr-cache/
+noctis-protocol/coverage/
+noctis-protocol/slither-report.*
+noctis-protocol/.venv-slither/
+
+# Private / local-only notes (not published)
+private/
+*.local.md
+
+# Misc (root-only stubs — do not ignore package test suites)
+/shared/
+/test/
+
+# Internal audit reports & security fix notes (kept local, not published)
+SECURITY_FIX_*.md
+**/SECURITY_FIX_*.md
+**/AUDIT_REPORT_*.md
+
+# Hardhat fhevm plugin temp artifacts
+**/fhevmTemp/

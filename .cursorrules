@@ -1,0 +1,299 @@
+# Git Operations
+- When committing and pushing, only push the noctis-protocol submodule repository
+- Do not push the parent repository (marketing/ folder)
+- Always commit and push changes in noctis-protocol/ directory only
+
+# Security Bug Resolution Workflow
+When fixing security vulnerabilities, ALWAYS follow this complete workflow:
+
+## 0. Vision Alignment Check (CRITICAL - DO THIS FIRST!)
+Before implementing ANY security fix, ALWAYS check VISION.md alignment:
+
+### Step 1: Read VISION.md
+- Check "MVP Scope" section (lines 496-542)
+- Check "Year 1" goals (line 622-630)
+- Check "Phase 2" features (lines 516-529)
+
+### Step 2: Categorize the Vulnerability
+**MVP-CRITICAL (Fix Immediately):**
+- Standard security patterns (CEI, pull-over-push, input validation)
+- Prevents immediate DoS or fund loss
+- No complex governance/economic dependencies
+- Examples: H-1 (DoS limits), H-2 (validation), M-3 (pull pattern)
+
+**YEAR 1 / PHASE 2 (Document for Later):**
+- Requires governance infrastructure (token, voting, DAO)
+- Requires economic incentives (staking, slashing, rewards)
+- Requires monitoring infrastructure (proof of misbehavior)
+- Adds 3+ weeks development time
+- Examples: M-2 (keeper slashing/reputation)
+
+### Step 3: Decision Matrix
+```
+Is it a standard security pattern? → YES → MVP (fix now)
+Does it prevent immediate DoS/loss? → YES → MVP (fix now)
+Does it require governance? → YES → Year 1 (document)
+Does it require token economics? → YES → Year 1 (document)
+Does it add >3 weeks complexity? → YES → Reconsider scope
+```
+
+### Step 4: If Year 1 Feature
+- DO NOT implement immediately
+- CREATE documentation: `ROADMAP_[FEATURE_NAME].md`
+- EXPLAIN why it's Year 1, not MVP
+- LIST dependencies (governance, token, monitoring)
+- PROPOSE implementation timeline
+
+### Step 5: If MVP Feature
+- PROCEED with security workflow below
+- REFERENCE vision alignment in documentation
+- EXPLAIN why it's MVP-critical
+
+**Key Principle:**
+- **MVP = Security First** (standard patterns, no governance complexity)
+- **Year 1 = Economic Incentives** (staking, slashing, reputation, governance)
+
+## 1. Analysis Phase
+- Read and understand the vulnerability completely
+- Check if the issue still exists in the current code
+- Identify the exact location(s) in the code
+- Analyze the attack vector and potential impact
+- **✅ CHECK VISION.MD ALIGNMENT FIRST** (see Step 0 above)
+
+## 2. Implementation Phase
+- Add necessary state variables with clear documentation
+- Add custom errors if needed
+- Implement the fix in all relevant functions
+- Add safety checks (e.g., underflow protection)
+- Maintain code consistency with existing patterns
+
+## 3. Testing Phase
+- Create comprehensive test file named: `test/[Contract].[vulnerability-name].test.ts`
+- Include multiple test scenarios:
+  - Normal usage (happy path)
+  - Attack prevention (should revert)
+  - Edge cases (underflow, overflow, etc.)
+  - Multi-user scenarios
+  - Gas efficiency tests
+- Run tests: `npm test -- --grep "[test name]"`
+- Verify all new tests pass
+- Run full test suite: `npm test` to ensure no regression
+
+## 4. Documentation Phase
+- Create security documentation: `SECURITY_FIX_[SEVERITY]_[ISSUE_NAME].md`
+- Include in documentation:
+  - Vulnerability description with attack scenario
+  - Fix implementation details with code snippets
+  - Security properties guaranteed
+  - Test coverage summary
+  - Gas analysis
+  - Before/After comparison
+  - Integration notes for developers
+
+## 5. Compilation & Verification
+- Compile contracts: `npm run compile`
+- Check for compilation errors
+- Verify no new linter warnings introduced
+- Review gas costs are acceptable
+
+## 6. Commit & Push
+- Stage only the relevant files:
+  - Modified contract(s)
+  - New test file(s)
+  - Security documentation
+- Write comprehensive commit message:
+  ```
+  Security: Fix [SEVERITY] [vulnerability name]
+  
+  [Brief description of the fix]
+  
+  Changes:
+  - [List all changes]
+  
+  Security Properties:
+  - [Security guarantees]
+  
+  Test Coverage:
+  - [Test summary]
+  
+  [Additional notes]
+  ```
+- Push to origin/main: `git push origin main`
+
+## 7. Quality Checklist
+Before marking as complete, verify:
+- [ ] Vulnerability is completely fixed (no bypass possible)
+- [ ] All new tests pass (100%)
+- [ ] No regression in existing tests
+- [ ] Code is well-documented with comments
+- [ ] Security documentation is complete
+- [ ] Gas costs are reasonable
+- [ ] Edge cases are covered
+- [ ] Committed and pushed to repository
+
+## Key Principles
+- **Security First**: Never compromise security for convenience
+- **Complete Testing**: Cover all attack vectors and edge cases
+- **Clear Documentation**: Future developers must understand the fix
+- **No Shortcuts**: Follow ALL steps even for "simple" fixes
+- **Verify Everything**: Test, compile, document, commit - no exceptions
+
+# Gas Optimization Best Practices
+Always apply these optimization techniques when writing or refactoring smart contracts:
+
+## Storage Optimization (Critical for Gas Savings)
+- **Variable Packing**: Group uint8, uint16, uint32, bool together in structs to fit 32-byte slots
+  ```solidity
+  // ❌ Bad: 3 storage slots
+  uint256 a; uint8 b; uint256 c;
+  
+  // ✅ Good: 2 storage slots
+  uint256 a; uint256 c; uint8 b;
+  ```
+- **Minimize State Variables**: Use off-chain storage (IPFS) for large data
+- **bytes32 over string**: For fixed-size strings, use bytes32 (saves ~50% gas)
+- **Cache Storage Reads**: Read storage variables once, use memory cache for multiple accesses
+  ```solidity
+  // ❌ Bad: Multiple SLOAD operations
+  function bad() {
+      if (stateVar > 0) { doSomething(stateVar); }
+  }
+  
+  // ✅ Good: Single SLOAD, cached in memory
+  function good() {
+      uint256 cached = stateVar;
+      if (cached > 0) { doSomething(cached); }
+  }
+  ```
+- **Mappings over Arrays**: For direct access, mappings are cheaper than array iteration
+
+## Function Optimization
+- **Function Visibility**: Use most restrictive visibility (private > internal > external > public)
+- **View/Pure Keywords**: Mark read-only functions as `view` or `pure`
+- **calldata over memory**: For external function parameters (read-only, no copies)
+  ```solidity
+  // ✅ Good: 50-80% cheaper for arrays/structs
+  function process(uint[] calldata data) external { }
+  ```
+- **External over Public**: For functions only called externally (saves ~200 gas per call)
+
+## Loop & Iteration Optimization
+- **Prefix Increment**: Use `++i` instead of `i++` (saves ~5 gas per iteration)
+- **Cache Array Length**: Don't read `array.length` in every iteration
+  ```solidity
+  // ✅ Good
+  uint256 len = array.length;
+  for (uint256 i; i < len; ++i) { }
+  ```
+- **Unchecked Arithmetic**: Use `unchecked {}` when overflow impossible (Solidity ≥0.8.0)
+  ```solidity
+  unchecked { ++i; } // Safe in bounded loops
+  ```
+- **Avoid Loops**: When possible, use mappings or off-chain indexing
+
+## Error Handling Optimization
+- **Custom Errors**: Use custom errors instead of require strings (saves ~50-100 gas)
+  ```solidity
+  // ❌ Expensive
+  require(x > 0, "Value must be positive");
+  
+  // ✅ Cheap
+  error ValueMustBePositive();
+  if (x == 0) revert ValueMustBePositive();
+  ```
+
+## Compiler Optimization
+- **Enable Optimizer**: Use `--optimize` flag in hardhat.config.ts
+- **Optimize Runs**: 
+  - Low runs (1-200): Cheaper deployment, more expensive execution
+  - High runs (1000+): More expensive deployment, cheaper execution
+  - Recommended: 200-1000 for production contracts
+
+## Security Patterns (OpenZeppelin Standards)
+- **Checks-Effects-Interactions (CEI)**: ALWAYS follow this pattern
+  ```solidity
+  function transfer() external {
+      // 1. CHECKS: Validate conditions
+      require(balance[msg.sender] >= amount);
+      
+      // 2. EFFECTS: Update state
+      balance[msg.sender] -= amount;
+      
+      // 3. INTERACTIONS: External calls
+      recipient.call{value: amount}("");
+  }
+  ```
+- **ReentrancyGuard**: Use OpenZeppelin's `nonReentrant` modifier for all state-changing functions with external calls
+- **SafeERC20**: Always use SafeERC20 for token transfers (handles non-standard tokens)
+- **Pausable**: Implement emergency pause mechanism for critical functions
+- **Access Control**: Use OpenZeppelin's `Ownable` or `AccessControl` for privileged functions
+
+## FHE-Specific Optimization (ZAMA/fhEVM)
+- **Smallest Encrypted Type**: Use euint8/euint16 instead of euint256 when possible
+  - euint8 operations: ~30-120K gas
+  - euint256 operations: ~180-550K gas
+- **Scalar Operands**: Use plaintext operands when possible
+  ```solidity
+  // ❌ Expensive: ~180K gas
+  TFHE.add(encrypted, TFHE.asEuint128(42))
+  
+  // ✅ Cheaper: ~120K gas
+  TFHE.add(encrypted, 42)
+  ```
+- **NEVER use constant/immutable**: With encrypted state variables (causes corruption)
+- **NEVER declare public**: Encrypted variables must be `internal` or `private`
+- **Avoid Decryption Branching**: Use `TFHE.select()` instead of decrypting for conditions
+  ```solidity
+  // ❌ Bad: Reveals encrypted value
+  uint256 decrypted = TFHE.decrypt(balance);
+  if (decrypted > threshold) { ... }
+  
+  // ✅ Good: Keeps value encrypted
+  ebool hasBalance = TFHE.gt(balance, threshold);
+  result = TFHE.select(hasBalance, valueA, valueB);
+  ```
+- **allowTransient() over allow()**: Use transient permissions for 40-60% gas savings
+- **Batch ACL Grants**: Grant permissions in batches when possible
+- **Gas Estimation**: Add 20% buffer for TFHE.decrypt operations
+
+## Code Quality Standards
+- **Events for Indexing**: Use events instead of storage for data not requiring immediate retrieval
+- **Libraries for Reusable Code**: Deploy shared logic as libraries (saves deployment costs)
+- **Short-Circuit Evaluation**: Order conditions by likelihood in if statements
+  ```solidity
+  // ✅ Good: Check cheaper condition first
+  if (quickCheck && expensiveCheck) { }
+  ```
+- **immutable for Constructor-Set Variables**: Use `immutable` instead of storage (saves ~2100 gas per read)
+- **Avoid String Concatenation**: Pre-compute strings off-chain when possible
+
+## Gas Analysis Checklist
+Before finalizing any contract:
+- [ ] Storage variables are packed efficiently
+- [ ] Storage reads are cached in functions
+- [ ] Custom errors used instead of require strings
+- [ ] CEI pattern followed in all state-changing functions
+- [ ] ReentrancyGuard on functions with external calls
+- [ ] calldata used for external function parameters
+- [ ] Loops optimized (++i, cached length, unchecked when safe)
+- [ ] Most restrictive visibility modifiers
+- [ ] FHE types are smallest possible size
+- [ ] Scalar operands used when possible
+- [ ] Compiler optimizer enabled (200-1000 runs)
+
+## Target Gas Costs (Benchmarks)
+- Simple storage write (SSTORE): ~20,000 gas
+- Storage read (SLOAD): ~2,100 gas
+- Transfer ETH: ~21,000 gas
+- ERC20 transfer: ~50,000-65,000 gas
+- FHE addition (euint128): ~120,000 gas
+- FHE multiplication (euint128): ~180,000 gas
+- FHE decrypt: ~500,000 gas
+
+## Optimization Priority
+1. **Security First**: Never compromise security for gas savings
+2. **Storage Access**: Biggest impact (avoid SSTORE/SLOAD when possible)
+3. **Custom Errors**: Easy wins (~50 gas per revert)
+4. **Loop Optimization**: High impact in iteration-heavy code
+5. **FHE Type Size**: Crucial for FHE contracts (3-10x difference)
+6. **Function Visibility**: Minor but consistent savings

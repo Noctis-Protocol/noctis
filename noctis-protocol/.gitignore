@@ -1,0 +1,33 @@
+# Existing ignores
+node_modules/
+artifacts/
+cache/
+coverage/
+coverage.json
+typechain-types/
+
+# Python venv
+venv/
+.venv-slither/
+__pycache__/
+*.py[cod]
+
+# Slither reports (keep .txt, ignore .json)
+slither-report.json
+
+# Environment
+.env
+.env.local
+
+# Local ops secrets (never commit)
+deployments/.sepolia-keeper.key
+deployments/*.key
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Hardhat/EDR RPC cache
+edr-cache/

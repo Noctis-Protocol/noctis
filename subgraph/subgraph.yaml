@@ -1,0 +1,70 @@
+specVersion: 0.0.5
+schema:
+  file: ./schema.graphql
+dataSources:
+  # NoctisVault - Deposits & Withdrawals
+  # Updated 2026-02-05: Privacy-First Architecture Deployment
+  - kind: ethereum/contract
+    name: NoctisVault
+    network: sepolia
+    source:
+      address: "0x6607cE016237C3D8969B318018604c09D16fdd03"
+      abi: NoctisVault
+      startBlock: 11445821
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - Deposit
+        - Withdrawal
+        - User
+        - GlobalStats
+      abis:
+        - name: NoctisVault
+          file: ./abis/NoctisVault.json
+      eventHandlers:
+        - event: ETHDeposited(indexed address)
+          handler: handleETHDeposit
+        - event: USDTDeposited(indexed address)
+          handler: handleUSDTDeposit
+        - event: WithdrawalRequested(indexed uint256,address,bool,uint256)
+          handler: handleWithdrawalRequested
+        - event: WithdrawalExecuted(indexed uint256,address,uint256)
+          handler: handleWithdrawalExecuted
+        - event: WithdrawalCancelled(indexed uint256,address)
+          handler: handleWithdrawalCancelled
+      file: ./src/noctis-vault.ts
+  
+  # NoctisExchange - Orders (PRIVACY-FIRST ARCHITECTURE)
+  # Updated 2026-02-05: Privacy audit fixes - no addresses in events
+  - kind: ethereum/contract
+    name: NoctisExchange
+    network: sepolia
+    source:
+      address: "0xcF13F272cdc5684c3863b589C2a9fb14A0aa0362"
+      abi: NoctisExchange
+      startBlock: 11447982
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - Order
+        - GlobalStats
+      abis:
+        - name: NoctisExchange
+          file: ./abis/NoctisExchange.json
+      eventHandlers:
+        # Privacy-first events (CRIT-3 fix: no addresses, no amounts)
+        - event: OrderCreated(indexed uint256,bool,uint256,uint8)
+          handler: handleOrderCreated
+        - event: OrderFilledSimple(indexed uint256,uint256)
+          handler: handleOrderFilledSimple
+        # Updated: SwapDecryptionReady no longer has indexed address (CRIT-3)
+        - event: SwapDecryptionReady(indexed uint256,bytes32[])
+          handler: handleSwapDecryptionReady
+        # Updated: OrderCancelled no longer has address parameter (CRIT-3)
+        - event: OrderCancelled(indexed uint256,uint256)
+          handler: handleOrderCancelled
+      file: ./src/noctis-exchange.ts

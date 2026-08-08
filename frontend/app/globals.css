@@ -1,0 +1,119 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Cool ink family — no pure black, no purple */
+    --background: 40 20% 97%;
+    --foreground: 160 12% 10%;
+    --card: 0 0% 100%;
+    --card-foreground: 160 12% 10%;
+    --primary: 162 42% 28%;
+    --primary-foreground: 40 30% 98%;
+    --secondary: 160 10% 94%;
+    --secondary-foreground: 160 12% 18%;
+    --muted: 160 8% 93%;
+    --muted-foreground: 160 6% 42%;
+    --accent: 160 14% 92%;
+    --accent-foreground: 160 12% 14%;
+    --destructive: 8 72% 48%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 160 10% 88%;
+    --input: 160 10% 88%;
+    --ring: 162 42% 28%;
+    --radius: 0.85rem;
+
+    --surface-glow: 162 30% 88%;
+    --ink-soft: 160 8% 28%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "ss01" on, "cv11" on;
+  }
+
+  h1,
+  h2,
+  .font-display {
+    font-family: var(--font-display), var(--font-sans), system-ui, sans-serif;
+    letter-spacing: -0.035em;
+    text-wrap: balance;
+  }
+
+  /*
+   * Amounts / trade figures — JetBrains Mono (real tabular digits).
+   * Syne is proportional; digits misalign between vault balance and swap inputs.
+   */
+  .font-amount {
+    font-family: var(--font-mono), ui-monospace, monospace;
+    font-variant-numeric: tabular-nums lining-nums;
+    font-feature-settings: "tnum" 1, "lnum" 1;
+    letter-spacing: -0.02em;
+    font-weight: 500;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Atmosphere: soft mesh + grain (not flat slate) */
+  .desk-atmosphere {
+    background-color: hsl(var(--background));
+    background-image:
+      radial-gradient(ellipse 80% 55% at 12% -10%, hsl(var(--surface-glow) / 0.85), transparent 55%),
+      radial-gradient(ellipse 60% 45% at 88% 8%, hsl(40 40% 92% / 0.9), transparent 50%),
+      radial-gradient(ellipse 50% 40% at 50% 100%, hsl(160 12% 90% / 0.55), transparent 55%);
+  }
+
+  .desk-grain {
+    pointer-events: none;
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    opacity: 0.035;
+    mix-blend-mode: multiply;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  .desk-panel {
+    @apply rounded-2xl border border-border/80 bg-card/90 backdrop-blur-sm;
+    box-shadow:
+      0 1px 0 hsl(160 10% 100% / 0.7) inset,
+      0 18px 40px -28px hsl(160 20% 12% / 0.35);
+  }
+
+  .desk-panel-quiet {
+    @apply rounded-2xl border border-border/60 bg-white/55 backdrop-blur-sm;
+  }
+}
+
+.token-amount {
+  @apply text-4xl font-semibold tracking-tight tabular;
+}
+
+.skeleton {
+  @apply animate-pulse bg-muted rounded;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

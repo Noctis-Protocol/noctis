@@ -1,0 +1,32 @@
+{
+  "name": "noctis-protocol-subgraph",
+  "version": "1.2.0",
+  "description": "The Graph subgraph for Noctis Protocol - FHE-powered dark pool DEX",
+  "scripts": {
+    "codegen": "graph codegen",
+    "build": "graph build",
+    "deploy": "graph deploy --studio noctis-protocol",
+    "create-local": "graph create --node http://localhost:8020/ noctis-protocol",
+    "remove-local": "graph remove --node http://localhost:8020/ noctis-protocol",
+    "deploy-local": "graph deploy --node http://localhost:8020/ --ipfs http://localhost:5001 noctis-protocol",
+    "test": "graph test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/noctis-protocol/subgraph"
+  },
+  "keywords": [
+    "noctis",
+    "fhe",
+    "dex",
+    "the-graph",
+    "ethereum",
+    "sepolia"
+  ],
+  "author": "Noctis Protocol",
+  "license": "MIT",
+  "devDependencies": {
+    "@graphprotocol/graph-cli": "^0.71.0",
+    "@graphprotocol/graph-ts": "^0.35.1"
+  }
+}

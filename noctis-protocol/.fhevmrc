@@ -1,0 +1,33 @@
+{
+  "networks": {
+    "sepolia": {
+      "chainId": 11155111,
+      "fhevmSupported": true,
+      "gatewayURL": "https://gateway.sepolia.zama.ai",
+      "ACLAddress": "0xf0Ffdc93b7E186bC2f8CB3dAA75D86d1930A433D",
+      "CoprocessorAddress": "0x92C920834Ec8941d2C77D188936E1f7A6f49c127",
+      "InputVerifierAddress": "0xBBC1fFCdc7C316aAAd72E807D9b0272BE8F84DA0",
+      "HCULimitAddress": "0xa10998783c8CF88D886Bc30307e631D6686F0A22",
+      "KMSVerifierAddress": "0xbE0E383937d564D7FF0BC3b46c51f0bF8d5C311A"
+    },
+    "zamaDevnet": {
+      "chainId": 9000,
+      "fhevmSupported": true,
+      "gatewayURL": "https://gateway.devnet.zama.ai",
+      "ACLAddress": "0x50157CFfD6bBFA2DECe204a89ec419c23ef5755D",
+      "CoprocessorAddress": "0xCD3ab3bd6bcc0c0bf3E27912a92043e817B1cf69",
+      "InputVerifierAddress": "0x901F8942346f7AB3a01F6D7613119Bca447Bb030",
+      "HCULimitAddress": "0x36772142b74871f255CbD7A3e89B401d3e45825f"
+    },
+    "hardhat": {
+      "chainId": 31337,
+      "fhevmSupported": true,
+      "useMockedFhevm": true
+    },
+    "localhost": {
+      "chainId": 31337,
+      "fhevmSupported": true,
+      "useMockedFhevm": true
+    }
+  }
+}
