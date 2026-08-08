@@ -15,6 +15,7 @@ import { getDeskNetwork } from "@/lib/networks";
 const navLinks = [
   { href: "/about", label: "About" },
   { href: "/docs", label: "Docs" },
+  { href: "/metrics", label: "Metrics" },
 ];
 
 export function Header() {
