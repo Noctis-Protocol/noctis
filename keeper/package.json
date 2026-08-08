@@ -13,8 +13,10 @@
     "test": "echo \"No unit tests yet\"",
     "check-vault": "tsx src/check-vault.ts",
     "add-keeper": "tsx src/add-keeper.ts",
-    "monitor": "tsx src/ops-monitor.ts",
-    "monitor:ping": "tsx src/ops-monitor.ts --ping",
+    "monitor": "tsx src/monitor/index.ts",
+    "monitor:ping": "tsx src/monitor/index.ts --ping",
+    "monitor:legacy": "tsx src/ops-monitor.ts",
+    "test:monitor": "tsx --test src/monitor/alerts.test.ts",
     "keystore:create": "tsx src/create-keystore.ts"
   },
   "dependencies": {

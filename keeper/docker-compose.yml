@@ -47,28 +47,53 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: noctis-ops-monitor
-    command: ["npx", "tsx", "src/ops-monitor.ts"]
+    command: ["npx", "tsx", "src/monitor/index.ts"]
     env_file:
       - .env
     environment:
-      - RELAYER_HEALTH_URL=http://relayer:3001/api/relay/health?deep=1
+      - RELAYER_HEALTH_URL=http://relayer:3001/api/relay/health
       - MONITOR_RPC_URL=${MONITOR_RPC_URL:-https://ethereum-sepolia-rpc.publicnode.com}
-      - MONITOR_INTERVAL_MS=${MONITOR_INTERVAL_MS:-30000}
-      - MAX_FEE_SILENCE_HOURS=${MAX_FEE_SILENCE_HOURS:-0}
-      - USDT_ADDRESS=${USDT_ADDRESS:-0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238}
-      - ALERT_LOG_PATH=/app/logs/alerts.jsonl
+      - SUBGRAPH_URL=${SUBGRAPH_URL:-}
+      - EXPECTED_RELAYER=${EXPECTED_RELAYER:-}
+      # Thresholds
+      - MONITOR_MIN_ETH=${MONITOR_MIN_ETH:-0.05}
+      - SUBGRAPH_LAG_BLOCKS=${SUBGRAPH_LAG_BLOCKS:-50}
+      - STUCK_ORDER_MAX_AGE_MIN=${STUCK_ORDER_MAX_AGE_MIN:-30}
+      - CHAIN_STALL_MS=${CHAIN_STALL_MS:-300000}
+      # Per-check intervals
+      - CHECK_HEALTH_INTERVAL_MS=${CHECK_HEALTH_INTERVAL_MS:-30000}
+      - CHECK_RPC_INTERVAL_MS=${CHECK_RPC_INTERVAL_MS:-30000}
+      - CHECK_BALANCE_INTERVAL_MS=${CHECK_BALANCE_INTERVAL_MS:-60000}
+      - CHECK_PAUSED_INTERVAL_MS=${CHECK_PAUSED_INTERVAL_MS:-60000}
+      - CHECK_SUBGRAPH_INTERVAL_MS=${CHECK_SUBGRAPH_INTERVAL_MS:-120000}
+      - CHECK_ORDERS_INTERVAL_MS=${CHECK_ORDERS_INTERVAL_MS:-300000}
+      # Alerting
+      - ALERT_WEBHOOK_URL=${ALERT_WEBHOOK_URL:-}
       - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL:-}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
-      - ALERT_WEBHOOK_URL=${ALERT_WEBHOOK_URL:-}
+      - ALERT_COOLDOWN_MS=${ALERT_COOLDOWN_MS:-1800000}
+      - ALERT_LOG_PATH=/app/logs/alerts.jsonl
+      - MONITOR_STATE_PATH=/app/logs/monitor-state.json
+      # Heartbeat
+      - HEARTBEAT_ENABLED=${HEARTBEAT_ENABLED:-1}
+      - HEARTBEAT_INTERVAL_MS=${HEARTBEAT_INTERVAL_MS:-86400000}
+      # Status endpoint (bound to localhost on the host below)
+      - MONITOR_STATUS_PORT=3002
       # Monitor does not need the keeper private key
       - KEEPER_PRIVATE_KEY=
       - PRIVATE_KEY=
       - KEEPER_PRIVATE_KEY_FILE=
+    ports:
+      - "127.0.0.1:3002:3002"
     volumes:
       - ./logs:/app/logs
     healthcheck:
-      disable: true
+      test: ["CMD", "curl", "-f", "http://localhost:3002/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
     restart: unless-stopped
     depends_on:
       relayer:
