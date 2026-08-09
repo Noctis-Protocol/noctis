@@ -27,9 +27,13 @@ What stays private, from whom:
   appears in no event or getter; vaultIds are pseudo-random AND one-time — the
   vault rotates a trader's pseudonym every time a relayed order fills or
   cancels, so sequential orders never share an id in calldata. Withdrawal
-  payouts are quantized to batching windows to break fill→payout timing.
+  payouts are quantized to batching windows to break fill→payout timing, and
+  **stealth exits** let funds leave to a browser-encrypted destination that is
+  revealed only when the payout executes — a fresh address with no prior
+  on-chain link to the requester (ETH is pushed directly, no gas needed).
   Residual: raw storage reads (`eth_getStorageAt`) can still link a live
-  pseudonym to its address — stealth-address settlement is the Year 2 fix
+  pseudonym or balance slot to its address — removing that entirely needs a
+  shielded-pool design, out of scope for this contract generation
   (`ROADMAP_E2E_ENCRYPTED_INTENTS.md`).
 - **Trusted relayer for liveness only.** The relayer can censor or delay, but
   cannot read amounts, decrypt balances, alter EIP-712-signed parameters, or

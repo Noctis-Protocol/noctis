@@ -101,7 +101,7 @@ export const NoctisVaultABI = [
     ],
     outputs: [{ name: "", type: "uint256" }],
   },
-  // Withdrawals (client-side encrypted amount — mempool privacy)
+  // Withdrawals (client-side encrypted amount + recipient — stealth exits)
   {
     name: "requestWithdrawalPrivate",
     type: "function",
@@ -109,6 +109,7 @@ export const NoctisVaultABI = [
     inputs: [
       { name: "token", type: "address" },
       { name: "encryptedAmount", type: "bytes32" }, // externalEuint128
+      { name: "encryptedRecipient", type: "bytes32" }, // externalEaddress
       { name: "inputProof", type: "bytes" },
     ],
     outputs: [{ name: "", type: "uint256" }],

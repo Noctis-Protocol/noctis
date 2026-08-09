@@ -3,8 +3,8 @@
   "chainId": 11155111,
   "updatedAt": "2026-08-09",
   "contracts": {
-    "NoctisVaultV2": "0xcA9541cF6Aeb41b120004139130CA6E46d8469b6",
-    "NoctisExchangeV2": "0x98959b71914641fd2F7b13f5403Af8969f57FB0b",
+    "NoctisVaultV2": "0x4242E5E8eAC807c9Dd499472C72A6aE3AB0b1323",
+    "NoctisExchangeV2": "0xdc4E8bfa902414FC58C8f69dacB3E1a4F94ecC1c",
     "USDC": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
     "UniswapV2Router": "0xC532a74256D3Db42D0Bf7a0400fEFDbad7694008",
     "EthUsdPriceFeed": "0x694AA1769357215DE4FAC081bf1f309aDC325306",
@@ -26,8 +26,8 @@
       "poolSeedTx": "0x295c283c71588e1cfddb454773519e5400c425afcae6d8c53ba7364edfe36cec",
       "vaultConfigured": true,
       "exchangeConfigured": true,
-      "minOrderBase": "1543",
-      "maxOrderBase": "92591"
+      "minOrderBase": "1540",
+      "maxOrderBase": "92441"
     },
     "nLINK": {
       "address": "0xA09EC0B0A6b0387DFbF0e14a18572BDb54cd8913",
@@ -40,8 +40,8 @@
       "poolSeedTx": "0x90a85c0845018d4e64f8e501c47a2c6dc740c75ef48cd1e5900e0e4749353d5e",
       "vaultConfigured": true,
       "exchangeConfigured": true,
-      "minOrderBase": "120429243979275731",
-      "maxOrderBase": "7225754638756543873"
+      "minOrderBase": "120563126250088915",
+      "maxOrderBase": "7233787575005334918"
     },
     "nDAI": {
       "address": "0xFeaD8B309127f48Ec8028927d8a3c4Fcda50031D",
@@ -75,13 +75,13 @@
   "ops": {
     "relayer": "0xB63063402eD60d4630bc575dEC5458CDB94d16D6",
     "timelock": "0x6fa358E424341F60338620f26AB297553E551A7D",
-    "timelockConfiguredAt": "2026-08-09T10:54:37.023Z",
+    "timelockConfiguredAt": "2026-08-09T11:19:49.672Z",
     "withdrawalBatchWindowSeconds": 300
   },
   "subgraph": {
-    "version": "v2.2.0",
-    "queryUrl": "https://api.studio.thegraph.com/query/1724540/noctis-protocol/v2.2.0",
-    "startBlock": 11451400,
+    "version": "v2.4.0",
+    "queryUrl": "https://api.studio.thegraph.com/query/1724540/noctis-protocol/v2.4.0",
+    "startBlock": 11451850,
     "studioUrl": "https://thegraph.com/studio/subgraph/noctis-protocol",
     "name": "noctis-protocol"
   }

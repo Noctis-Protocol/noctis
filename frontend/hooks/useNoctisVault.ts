@@ -23,7 +23,7 @@ import { NoctisVaultABI, ERC20ABI } from "@/lib/contracts/abi";
 import { useContractAddresses } from "@/lib/wagmi";
 import { useTransactionState } from "./useTransactionState";
 import { useFhevm } from "./useFhevm";
-import { encryptAmount128 } from "@/lib/fheEncryptClient";
+import { encryptWithdrawalIntent } from "@/lib/fheEncryptClient";
 import {
   parseTokenAmount,
   formatTokenAmount,
@@ -44,8 +44,8 @@ interface UseNoctisVaultReturn {
   depositETH: (amount: string) => Promise<boolean>;
   /** Deposit a registered ERC-20 (approve + depositToken) — raw units */
   depositToken: (token: TokenInfo, amount: bigint) => Promise<boolean>;
-  /** Request a withdrawal (self-recipient in V2) — returns requestId */
-  requestWithdrawal: (token: TokenInfo, amount: string) => Promise<bigint | null>;
+  /** Request a withdrawal — optional stealth recipient (Year 2) — returns requestId */
+  requestWithdrawal: (token: TokenInfo, amount: string, recipient?: string) => Promise<bigint | null>;
   /** Execute withdrawal via self-relay public decrypt — returns true on success */
   executeWithdrawal: (requestId: bigint) => Promise<boolean>;
   cancelWithdrawal: (requestId: bigint) => Promise<boolean>;
@@ -208,11 +208,13 @@ export function useNoctisVault(options?: UseNoctisVaultOptions): UseNoctisVaultR
     [contracts, publicClient, writeContractAsync, finalizeDeposit, setPending, setConfirming, setFailed]
   );
 
-  // Request withdrawal (self-recipient in V2) - returns requestId or null
-  // PRIVACY-FIRST: encrypts the amount client-side when the FHE relayer is up,
-  // falling back to the plaintext requestWithdrawal(token, amount) path.
+  // Request withdrawal - returns requestId or null
+  // PRIVACY (Year 2, stealth exits): amount AND payout destination encrypted
+  // in the browser. `recipient` defaults to the connected wallet; pass a fresh
+  // address for a stealth exit (revealed only when the payout executes).
+  // Falls back to the plaintext self-only path if encryption is unavailable.
   const requestWithdrawal = useCallback(
-    async (token: TokenInfo, amount: string): Promise<bigint | null> => {
+    async (token: TokenInfo, amount: string, recipient?: string): Promise<bigint | null> => {
       if (!contracts?.vaultAddress) {
         setFailed("Vault contract not configured for this chain");
         return null;
@@ -311,18 +313,31 @@ export function useNoctisVault(options?: UseNoctisVaultOptions): UseNoctisVaultR
           return requestId;
         };
 
-        // PRIVACY (phase B): encrypt the amount IN THE BROWSER — the plaintext
-        // never reaches our API routes or calldata. The proof binds to
-        // (vault, user) since the user is msg.sender of requestWithdrawalPrivate.
-        let encrypted: { encryptedAmount: `0x${string}`; inputProof: `0x${string}` };
+        // PRIVACY (Year 2): encrypt amount AND recipient IN THE BROWSER — the
+        // payout destination stays an opaque handle on-chain until execution.
+        // Default recipient = self; a stealth exit passes a fresh address.
+        const payoutRecipient = recipient && /^0x[a-fA-F0-9]{40}$/.test(recipient)
+          ? recipient
+          : address;
+        let encrypted: {
+          encryptedAmount: `0x${string}`;
+          encryptedRecipient: `0x${string}`;
+          inputProof: `0x${string}`;
+        };
         try {
-          encrypted = await encryptAmount128(
+          encrypted = await encryptWithdrawalIntent(
             contracts.vaultAddress,
             address,
-            amountBigInt
+            amountBigInt,
+            payoutRecipient
           );
         } catch (encErr) {
-          // Fallback: plaintext amount path (amount visible in calldata)
+          if (payoutRecipient !== address) {
+            // NEVER downgrade a stealth exit to a plaintext self-withdrawal
+            setFailed("Encryption unavailable — cannot do a private-destination withdrawal right now.");
+            return null;
+          }
+          // Fallback: plaintext self path (amount visible in calldata)
           console.warn("⚠️ Browser-side encryption unavailable, using plaintext requestWithdrawal", encErr);
           const hash = await writeContractAsync({
             abi: NoctisVaultABI,
@@ -346,7 +361,8 @@ export function useNoctisVault(options?: UseNoctisVaultOptions): UseNoctisVaultR
           functionName: "requestWithdrawalPrivate",
           args: [
             token.address,
-            encrypted.encryptedAmount, // encryptedAmount (externalEuint128)
+            encrypted.encryptedAmount, // externalEuint128
+            encrypted.encryptedRecipient, // externalEaddress (stealth exit)
             encrypted.inputProof,
           ],
           gas: 3_000_000n,

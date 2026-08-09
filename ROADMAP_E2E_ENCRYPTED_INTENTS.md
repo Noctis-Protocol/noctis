@@ -1,6 +1,6 @@
 # Roadmap — End-to-End Encrypted Intents
 
-**Status:** Phases A **and B** SHIPPED (MVP, 2026-08-09).
+**Status:** Phases A, B **and Year 2 (stealth exits)** SHIPPED (2026-08-09).
 
 - **Phase A** — `createEncryptedOrderViaRelayer` (browser-side FHE input
   encryption, bounds enforced at settlement) and pseudo-random vaultIds.
@@ -23,10 +23,33 @@
     withdrawals too (the `/api/fhevm/encrypt` server route that received
     plaintext amounts is deleted), `Cache-Control: no-store` on the relayer
     and on `balance-handle`, no IP persisted in relay logs.
-- **Remaining (Year 2):** storage-read linkability (`vaultOwners`,
-  `orderTraders` are plaintext slots readable via `eth_getStorageAt` — the
-  settlement credit path needs a plaintext address today), stealth-address
-  settlement, encrypted direction.
+- **Year 2 — stealth exits** — live on Sepolia (V2.3):
+  - **Encrypted withdrawal recipients (`eaddress`):** `requestWithdrawalPrivate`
+    now takes a browser-encrypted `(amount, recipient)` pair. The payout
+    destination is an opaque FHE handle on-chain from request until the payout
+    executes (quantized to the batch window), so post-trade funds land on a
+    **fresh address with no prior on-chain link** to the requester. ETH is
+    pushed directly (fresh EOAs have no gas to pull; claimable fallback if the
+    transfer is rejected); limits and pending counts stay keyed on the
+    requester so stealth destinations cannot evade per-user caps.
+  - This closes the useful half of "stealth-address settlement". The exit —
+    the moment funds return to a spendable wallet — is where unlinkability
+    pays; the lifecycle is now: attributable deposit → encrypted sizes +
+    one-time pseudonyms while trading → stealth exit.
+- **Explicitly out of scope (V3+, with rationale):**
+  - **Removing `orderTraders`/`vaultOwners` plaintext storage entirely:**
+    cryptographically blocked on fhEVM — the settlement credit path must index
+    `balances[token][address]` with a plaintext key (mappings cannot be
+    indexed by ciphertext), and storage-diffing the settlement tx reveals
+    which funding balance was debited regardless of what the mappings say.
+    True unlinkable balances need a shielded-pool design (ZK nullifiers),
+    which is a different protocol, not a patch.
+  - **Encrypted direction (`isBuy`):** feasible only by unifying SELL into
+    the BUY-style two-leg flow (direction joins the existing public-decrypt
+    handle set; the lock/sufficiency prepare moves post-decrypt). That is a
+    settlement-machine rewrite with the exchange at **63 bytes** under the
+    EIP-170 limit, for a field that becomes public at the Uniswap fill
+    seconds later. Deliberately deferred to a V3 contract split.
 **Scope:** contracts (`NoctisExchangeV2`, `NoctisVaultV2`), keeper, frontend, subgraph
 **Goal:** shrink the trust window on order size from *relayer + anyone parsing calldata* down to *settlement only* (where the size becomes public at the Uniswap fill anyway).
 
@@ -235,8 +258,13 @@ These are **not solved by encrypted intents** and need their own tracks.
    relayed EIP-712 path; dropping the plaintext `orderTraders` mapping is
    blocked on the settlement credit path (needs a plaintext address) and moves
    to the stealth-address track.
-3. **Year 2:** stealth-address settlement (removes plaintext identity storage
-   entirely), encrypted direction.
+3. ~~**Year 2:** stealth exits — encrypted withdrawal recipients revealed only
+   at payout, ETH push-with-fallback for fresh addresses.~~ **SHIPPED**
+   (V2.3, 2026-08-09).
+4. **V3+ (deliberate non-goals for this contract generation):** full removal
+   of plaintext identity storage (needs a shielded-pool/ZK design — see
+   scope note above) and encrypted direction (needs a settlement-flow
+   unification + contract split to clear EIP-170).
 
 ## 6. Open questions
 

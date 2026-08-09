@@ -884,6 +884,65 @@ export class NoctisExchangeV2 extends ethereum.SmartContract {
     return ethereum.CallResult.fromValue(value[0].toBigInt());
   }
 
+  createEncryptedOrderViaRelayer(
+    vaultId: BigInt,
+    baseToken: Address,
+    encryptedAmount: Bytes,
+    inputProof: Bytes,
+    isBuy: boolean,
+    slippageToleranceBPS: i32,
+    maxPriceDeviationBPS: i32,
+    gasRefundWei: BigInt,
+  ): BigInt {
+    let result = super.call(
+      "createEncryptedOrderViaRelayer",
+      "createEncryptedOrderViaRelayer(uint256,address,bytes32,bytes,bool,uint16,uint16,uint128):(uint256)",
+      [
+        ethereum.Value.fromUnsignedBigInt(vaultId),
+        ethereum.Value.fromAddress(baseToken),
+        ethereum.Value.fromFixedBytes(encryptedAmount),
+        ethereum.Value.fromBytes(inputProof),
+        ethereum.Value.fromBoolean(isBuy),
+        ethereum.Value.fromUnsignedBigInt(BigInt.fromI32(slippageToleranceBPS)),
+        ethereum.Value.fromUnsignedBigInt(BigInt.fromI32(maxPriceDeviationBPS)),
+        ethereum.Value.fromUnsignedBigInt(gasRefundWei),
+      ],
+    );
+
+    return result[0].toBigInt();
+  }
+
+  try_createEncryptedOrderViaRelayer(
+    vaultId: BigInt,
+    baseToken: Address,
+    encryptedAmount: Bytes,
+    inputProof: Bytes,
+    isBuy: boolean,
+    slippageToleranceBPS: i32,
+    maxPriceDeviationBPS: i32,
+    gasRefundWei: BigInt,
+  ): ethereum.CallResult<BigInt> {
+    let result = super.tryCall(
+      "createEncryptedOrderViaRelayer",
+      "createEncryptedOrderViaRelayer(uint256,address,bytes32,bytes,bool,uint16,uint16,uint128):(uint256)",
+      [
+        ethereum.Value.fromUnsignedBigInt(vaultId),
+        ethereum.Value.fromAddress(baseToken),
+        ethereum.Value.fromFixedBytes(encryptedAmount),
+        ethereum.Value.fromBytes(inputProof),
+        ethereum.Value.fromBoolean(isBuy),
+        ethereum.Value.fromUnsignedBigInt(BigInt.fromI32(slippageToleranceBPS)),
+        ethereum.Value.fromUnsignedBigInt(BigInt.fromI32(maxPriceDeviationBPS)),
+        ethereum.Value.fromUnsignedBigInt(gasRefundWei),
+      ],
+    );
+    if (result.reverted) {
+      return new ethereum.CallResult();
+    }
+    let value = result.value;
+    return ethereum.CallResult.fromValue(value[0].toBigInt());
+  }
+
   createMarketOrder(
     baseToken: Address,
     amountBase: BigInt,
@@ -922,61 +981,6 @@ export class NoctisExchangeV2 extends ethereum.SmartContract {
         ethereum.Value.fromBoolean(isBuy),
         ethereum.Value.fromUnsignedBigInt(BigInt.fromI32(slippageToleranceBPS)),
         ethereum.Value.fromUnsignedBigInt(BigInt.fromI32(maxPriceDeviationBPS)),
-      ],
-    );
-    if (result.reverted) {
-      return new ethereum.CallResult();
-    }
-    let value = result.value;
-    return ethereum.CallResult.fromValue(value[0].toBigInt());
-  }
-
-  createMarketOrderViaRelayer(
-    vaultId: BigInt,
-    baseToken: Address,
-    amountBase: BigInt,
-    isBuy: boolean,
-    slippageToleranceBPS: i32,
-    maxPriceDeviationBPS: i32,
-    gasRefundWei: BigInt,
-  ): BigInt {
-    let result = super.call(
-      "createMarketOrderViaRelayer",
-      "createMarketOrderViaRelayer(uint256,address,uint128,bool,uint16,uint16,uint128):(uint256)",
-      [
-        ethereum.Value.fromUnsignedBigInt(vaultId),
-        ethereum.Value.fromAddress(baseToken),
-        ethereum.Value.fromUnsignedBigInt(amountBase),
-        ethereum.Value.fromBoolean(isBuy),
-        ethereum.Value.fromUnsignedBigInt(BigInt.fromI32(slippageToleranceBPS)),
-        ethereum.Value.fromUnsignedBigInt(BigInt.fromI32(maxPriceDeviationBPS)),
-        ethereum.Value.fromUnsignedBigInt(gasRefundWei),
-      ],
-    );
-
-    return result[0].toBigInt();
-  }
-
-  try_createMarketOrderViaRelayer(
-    vaultId: BigInt,
-    baseToken: Address,
-    amountBase: BigInt,
-    isBuy: boolean,
-    slippageToleranceBPS: i32,
-    maxPriceDeviationBPS: i32,
-    gasRefundWei: BigInt,
-  ): ethereum.CallResult<BigInt> {
-    let result = super.tryCall(
-      "createMarketOrderViaRelayer",
-      "createMarketOrderViaRelayer(uint256,address,uint128,bool,uint16,uint16,uint128):(uint256)",
-      [
-        ethereum.Value.fromUnsignedBigInt(vaultId),
-        ethereum.Value.fromAddress(baseToken),
-        ethereum.Value.fromUnsignedBigInt(amountBase),
-        ethereum.Value.fromBoolean(isBuy),
-        ethereum.Value.fromUnsignedBigInt(BigInt.fromI32(slippageToleranceBPS)),
-        ethereum.Value.fromUnsignedBigInt(BigInt.fromI32(maxPriceDeviationBPS)),
-        ethereum.Value.fromUnsignedBigInt(gasRefundWei),
       ],
     );
     if (result.reverted) {
@@ -1775,6 +1779,68 @@ export class ConfigureTradableTokenCall__Outputs {
   }
 }
 
+export class CreateEncryptedOrderViaRelayerCall extends ethereum.Call {
+  get inputs(): CreateEncryptedOrderViaRelayerCall__Inputs {
+    return new CreateEncryptedOrderViaRelayerCall__Inputs(this);
+  }
+
+  get outputs(): CreateEncryptedOrderViaRelayerCall__Outputs {
+    return new CreateEncryptedOrderViaRelayerCall__Outputs(this);
+  }
+}
+
+export class CreateEncryptedOrderViaRelayerCall__Inputs {
+  _call: CreateEncryptedOrderViaRelayerCall;
+
+  constructor(call: CreateEncryptedOrderViaRelayerCall) {
+    this._call = call;
+  }
+
+  get vaultId(): BigInt {
+    return this._call.inputValues[0].value.toBigInt();
+  }
+
+  get baseToken(): Address {
+    return this._call.inputValues[1].value.toAddress();
+  }
+
+  get encryptedAmount(): Bytes {
+    return this._call.inputValues[2].value.toBytes();
+  }
+
+  get inputProof(): Bytes {
+    return this._call.inputValues[3].value.toBytes();
+  }
+
+  get isBuy(): boolean {
+    return this._call.inputValues[4].value.toBoolean();
+  }
+
+  get slippageToleranceBPS(): i32 {
+    return this._call.inputValues[5].value.toI32();
+  }
+
+  get maxPriceDeviationBPS(): i32 {
+    return this._call.inputValues[6].value.toI32();
+  }
+
+  get gasRefundWei(): BigInt {
+    return this._call.inputValues[7].value.toBigInt();
+  }
+}
+
+export class CreateEncryptedOrderViaRelayerCall__Outputs {
+  _call: CreateEncryptedOrderViaRelayerCall;
+
+  constructor(call: CreateEncryptedOrderViaRelayerCall) {
+    this._call = call;
+  }
+
+  get value0(): BigInt {
+    return this._call.outputValues[0].value.toBigInt();
+  }
+}
+
 export class CreateMarketOrderCall extends ethereum.Call {
   get inputs(): CreateMarketOrderCall__Inputs {
     return new CreateMarketOrderCall__Inputs(this);
@@ -1817,64 +1883,6 @@ export class CreateMarketOrderCall__Outputs {
   _call: CreateMarketOrderCall;
 
   constructor(call: CreateMarketOrderCall) {
-    this._call = call;
-  }
-
-  get value0(): BigInt {
-    return this._call.outputValues[0].value.toBigInt();
-  }
-}
-
-export class CreateMarketOrderViaRelayerCall extends ethereum.Call {
-  get inputs(): CreateMarketOrderViaRelayerCall__Inputs {
-    return new CreateMarketOrderViaRelayerCall__Inputs(this);
-  }
-
-  get outputs(): CreateMarketOrderViaRelayerCall__Outputs {
-    return new CreateMarketOrderViaRelayerCall__Outputs(this);
-  }
-}
-
-export class CreateMarketOrderViaRelayerCall__Inputs {
-  _call: CreateMarketOrderViaRelayerCall;
-
-  constructor(call: CreateMarketOrderViaRelayerCall) {
-    this._call = call;
-  }
-
-  get vaultId(): BigInt {
-    return this._call.inputValues[0].value.toBigInt();
-  }
-
-  get baseToken(): Address {
-    return this._call.inputValues[1].value.toAddress();
-  }
-
-  get amountBase(): BigInt {
-    return this._call.inputValues[2].value.toBigInt();
-  }
-
-  get isBuy(): boolean {
-    return this._call.inputValues[3].value.toBoolean();
-  }
-
-  get slippageToleranceBPS(): i32 {
-    return this._call.inputValues[4].value.toI32();
-  }
-
-  get maxPriceDeviationBPS(): i32 {
-    return this._call.inputValues[5].value.toI32();
-  }
-
-  get gasRefundWei(): BigInt {
-    return this._call.inputValues[6].value.toBigInt();
-  }
-}
-
-export class CreateMarketOrderViaRelayerCall__Outputs {
-  _call: CreateMarketOrderViaRelayerCall;
-
-  constructor(call: CreateMarketOrderViaRelayerCall) {
     this._call = call;
   }
 

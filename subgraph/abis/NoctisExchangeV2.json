@@ -244,6 +244,11 @@
   },
   {
     "inputs": [],
+    "name": "OrderAmountOutOfBounds",
+    "type": "error"
+  },
+  {
+    "inputs": [],
     "name": "OrderNotFound",
     "type": "error"
   },
@@ -318,6 +323,22 @@
   {
     "inputs": [],
     "name": "SenderNotAllowed",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "handle",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "address",
+        "name": "sender",
+        "type": "address"
+      }
+    ],
+    "name": "SenderNotAllowedToUseHandle",
     "type": "error"
   },
   {
@@ -1101,6 +1122,60 @@
   {
     "inputs": [
       {
+        "internalType": "uint256",
+        "name": "vaultId",
+        "type": "uint256"
+      },
+      {
+        "internalType": "address",
+        "name": "baseToken",
+        "type": "address"
+      },
+      {
+        "internalType": "externalEuint128",
+        "name": "encryptedAmount",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "bytes",
+        "name": "inputProof",
+        "type": "bytes"
+      },
+      {
+        "internalType": "bool",
+        "name": "isBuy",
+        "type": "bool"
+      },
+      {
+        "internalType": "uint16",
+        "name": "slippageToleranceBPS",
+        "type": "uint16"
+      },
+      {
+        "internalType": "uint16",
+        "name": "maxPriceDeviationBPS",
+        "type": "uint16"
+      },
+      {
+        "internalType": "uint128",
+        "name": "gasRefundWei",
+        "type": "uint128"
+      }
+    ],
+    "name": "createEncryptedOrderViaRelayer",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
         "internalType": "address",
         "name": "baseToken",
         "type": "address"
@@ -1127,55 +1202,6 @@
       }
     ],
     "name": "createMarketOrder",
-    "outputs": [
-      {
-        "internalType": "uint256",
-        "name": "",
-        "type": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "uint256",
-        "name": "vaultId",
-        "type": "uint256"
-      },
-      {
-        "internalType": "address",
-        "name": "baseToken",
-        "type": "address"
-      },
-      {
-        "internalType": "uint128",
-        "name": "amountBase",
-        "type": "uint128"
-      },
-      {
-        "internalType": "bool",
-        "name": "isBuy",
-        "type": "bool"
-      },
-      {
-        "internalType": "uint16",
-        "name": "slippageToleranceBPS",
-        "type": "uint16"
-      },
-      {
-        "internalType": "uint16",
-        "name": "maxPriceDeviationBPS",
-        "type": "uint16"
-      },
-      {
-        "internalType": "uint128",
-        "name": "gasRefundWei",
-        "type": "uint128"
-      }
-    ],
-    "name": "createMarketOrderViaRelayer",
     "outputs": [
       {
         "internalType": "uint256",

@@ -502,6 +502,24 @@ export class Unpaused__Params {
   }
 }
 
+export class WithdrawalBatchWindowUpdated extends ethereum.Event {
+  get params(): WithdrawalBatchWindowUpdated__Params {
+    return new WithdrawalBatchWindowUpdated__Params(this);
+  }
+}
+
+export class WithdrawalBatchWindowUpdated__Params {
+  _event: WithdrawalBatchWindowUpdated;
+
+  constructor(event: WithdrawalBatchWindowUpdated) {
+    this._event = event;
+  }
+
+  get window(): BigInt {
+    return this._event.parameters[0].value.toBigInt();
+  }
+}
+
 export class WithdrawalCancelled extends ethereum.Event {
   get params(): WithdrawalCancelled__Params {
     return new WithdrawalCancelled__Params(this);
@@ -634,6 +652,10 @@ export class NoctisVaultV2__getWithdrawalRequestResultValue0Struct extends ether
   get decryptionRequestTime(): BigInt {
     return this[8].toBigInt();
   }
+
+  get encRecipient(): Bytes {
+    return this[9].toBytes();
+  }
 }
 
 export class NoctisVaultV2__tokenConfigsResult {
@@ -709,6 +731,7 @@ export class NoctisVaultV2__withdrawalRequestsResult {
   value6: boolean;
   value7: boolean;
   value8: BigInt;
+  value9: Bytes;
 
   constructor(
     value0: BigInt,
@@ -720,6 +743,7 @@ export class NoctisVaultV2__withdrawalRequestsResult {
     value6: boolean,
     value7: boolean,
     value8: BigInt,
+    value9: Bytes,
   ) {
     this.value0 = value0;
     this.value1 = value1;
@@ -730,6 +754,7 @@ export class NoctisVaultV2__withdrawalRequestsResult {
     this.value6 = value6;
     this.value7 = value7;
     this.value8 = value8;
+    this.value9 = value9;
   }
 
   toMap(): TypedMap<string, ethereum.Value> {
@@ -743,6 +768,7 @@ export class NoctisVaultV2__withdrawalRequestsResult {
     map.set("value6", ethereum.Value.fromBoolean(this.value6));
     map.set("value7", ethereum.Value.fromBoolean(this.value7));
     map.set("value8", ethereum.Value.fromUnsignedBigInt(this.value8));
+    map.set("value9", ethereum.Value.fromFixedBytes(this.value9));
     return map;
   }
 
@@ -780,6 +806,10 @@ export class NoctisVaultV2__withdrawalRequestsResult {
 
   getDecryptionRequestTime(): BigInt {
     return this.value8;
+  }
+
+  getEncRecipient(): Bytes {
+    return this.value9;
   }
 }
 
@@ -917,6 +947,29 @@ export class NoctisVaultV2 extends ethereum.SmartContract {
     let result = super.tryCall(
       "MAX_USER_WITHDRAWALS_24H",
       "MAX_USER_WITHDRAWALS_24H():(uint256)",
+      [],
+    );
+    if (result.reverted) {
+      return new ethereum.CallResult();
+    }
+    let value = result.value;
+    return ethereum.CallResult.fromValue(value[0].toBigInt());
+  }
+
+  MAX_WITHDRAWAL_BATCH_WINDOW(): BigInt {
+    let result = super.call(
+      "MAX_WITHDRAWAL_BATCH_WINDOW",
+      "MAX_WITHDRAWAL_BATCH_WINDOW():(uint64)",
+      [],
+    );
+
+    return result[0].toBigInt();
+  }
+
+  try_MAX_WITHDRAWAL_BATCH_WINDOW(): ethereum.CallResult<BigInt> {
+    let result = super.tryCall(
+      "MAX_WITHDRAWAL_BATCH_WINDOW",
+      "MAX_WITHDRAWAL_BATCH_WINDOW():(uint64)",
       [],
     );
     if (result.reverted) {
@@ -1205,7 +1258,7 @@ export class NoctisVaultV2 extends ethereum.SmartContract {
   ): NoctisVaultV2__getWithdrawalRequestResultValue0Struct {
     let result = super.call(
       "getWithdrawalRequest",
-      "getWithdrawalRequest(uint256):((uint256,address,address,bytes32,bytes32,uint256,bool,bool,uint256))",
+      "getWithdrawalRequest(uint256):((uint256,address,address,bytes32,bytes32,uint256,bool,bool,uint256,bytes32))",
       [ethereum.Value.fromUnsignedBigInt(requestId)],
     );
 
@@ -1219,7 +1272,7 @@ export class NoctisVaultV2 extends ethereum.SmartContract {
   ): ethereum.CallResult<NoctisVaultV2__getWithdrawalRequestResultValue0Struct> {
     let result = super.tryCall(
       "getWithdrawalRequest",
-      "getWithdrawalRequest(uint256):((uint256,address,address,bytes32,bytes32,uint256,bool,bool,uint256))",
+      "getWithdrawalRequest(uint256):((uint256,address,address,bytes32,bytes32,uint256,bool,bool,uint256,bytes32))",
       [ethereum.Value.fromUnsignedBigInt(requestId)],
     );
     if (result.reverted) {
@@ -1494,14 +1547,16 @@ export class NoctisVaultV2 extends ethereum.SmartContract {
   requestWithdrawalPrivate(
     token: Address,
     encryptedAmount: Bytes,
+    encryptedRecipient: Bytes,
     inputProof: Bytes,
   ): BigInt {
     let result = super.call(
       "requestWithdrawalPrivate",
-      "requestWithdrawalPrivate(address,bytes32,bytes):(uint256)",
+      "requestWithdrawalPrivate(address,bytes32,bytes32,bytes):(uint256)",
       [
         ethereum.Value.fromAddress(token),
         ethereum.Value.fromFixedBytes(encryptedAmount),
+        ethereum.Value.fromFixedBytes(encryptedRecipient),
         ethereum.Value.fromBytes(inputProof),
       ],
     );
@@ -1512,14 +1567,16 @@ export class NoctisVaultV2 extends ethereum.SmartContract {
   try_requestWithdrawalPrivate(
     token: Address,
     encryptedAmount: Bytes,
+    encryptedRecipient: Bytes,
     inputProof: Bytes,
   ): ethereum.CallResult<BigInt> {
     let result = super.tryCall(
       "requestWithdrawalPrivate",
-      "requestWithdrawalPrivate(address,bytes32,bytes):(uint256)",
+      "requestWithdrawalPrivate(address,bytes32,bytes32,bytes):(uint256)",
       [
         ethereum.Value.fromAddress(token),
         ethereum.Value.fromFixedBytes(encryptedAmount),
+        ethereum.Value.fromFixedBytes(encryptedRecipient),
         ethereum.Value.fromBytes(inputProof),
       ],
     );
@@ -1571,6 +1628,29 @@ export class NoctisVaultV2 extends ethereum.SmartContract {
     );
   }
 
+  withdrawalBatchWindow(): BigInt {
+    let result = super.call(
+      "withdrawalBatchWindow",
+      "withdrawalBatchWindow():(uint64)",
+      [],
+    );
+
+    return result[0].toBigInt();
+  }
+
+  try_withdrawalBatchWindow(): ethereum.CallResult<BigInt> {
+    let result = super.tryCall(
+      "withdrawalBatchWindow",
+      "withdrawalBatchWindow():(uint64)",
+      [],
+    );
+    if (result.reverted) {
+      return new ethereum.CallResult();
+    }
+    let value = result.value;
+    return ethereum.CallResult.fromValue(value[0].toBigInt());
+  }
+
   withdrawalCounter(): BigInt {
     let result = super.call(
       "withdrawalCounter",
@@ -1597,7 +1677,7 @@ export class NoctisVaultV2 extends ethereum.SmartContract {
   withdrawalRequests(param0: BigInt): NoctisVaultV2__withdrawalRequestsResult {
     let result = super.call(
       "withdrawalRequests",
-      "withdrawalRequests(uint256):(uint256,address,address,bytes32,bytes32,uint256,bool,bool,uint256)",
+      "withdrawalRequests(uint256):(uint256,address,address,bytes32,bytes32,uint256,bool,bool,uint256,bytes32)",
       [ethereum.Value.fromUnsignedBigInt(param0)],
     );
 
@@ -1611,6 +1691,7 @@ export class NoctisVaultV2 extends ethereum.SmartContract {
       result[6].toBoolean(),
       result[7].toBoolean(),
       result[8].toBigInt(),
+      result[9].toBytes(),
     );
   }
 
@@ -1619,7 +1700,7 @@ export class NoctisVaultV2 extends ethereum.SmartContract {
   ): ethereum.CallResult<NoctisVaultV2__withdrawalRequestsResult> {
     let result = super.tryCall(
       "withdrawalRequests",
-      "withdrawalRequests(uint256):(uint256,address,address,bytes32,bytes32,uint256,bool,bool,uint256)",
+      "withdrawalRequests(uint256):(uint256,address,address,bytes32,bytes32,uint256,bool,bool,uint256,bytes32)",
       [ethereum.Value.fromUnsignedBigInt(param0)],
     );
     if (result.reverted) {
@@ -1637,6 +1718,7 @@ export class NoctisVaultV2 extends ethereum.SmartContract {
         value[6].toBoolean(),
         value[7].toBoolean(),
         value[8].toBigInt(),
+        value[9].toBytes(),
       ),
     );
   }
@@ -2439,8 +2521,12 @@ export class RequestWithdrawalPrivateCall__Inputs {
     return this._call.inputValues[1].value.toBytes();
   }
 
-  get inputProof(): Bytes {
+  get encryptedRecipient(): Bytes {
     return this._call.inputValues[2].value.toBytes();
+  }
+
+  get inputProof(): Bytes {
+    return this._call.inputValues[3].value.toBytes();
   }
 }
 
@@ -2482,6 +2568,36 @@ export class RetryWithdrawalExecutionCall__Outputs {
   _call: RetryWithdrawalExecutionCall;
 
   constructor(call: RetryWithdrawalExecutionCall) {
+    this._call = call;
+  }
+}
+
+export class RotateVaultIdCall extends ethereum.Call {
+  get inputs(): RotateVaultIdCall__Inputs {
+    return new RotateVaultIdCall__Inputs(this);
+  }
+
+  get outputs(): RotateVaultIdCall__Outputs {
+    return new RotateVaultIdCall__Outputs(this);
+  }
+}
+
+export class RotateVaultIdCall__Inputs {
+  _call: RotateVaultIdCall;
+
+  constructor(call: RotateVaultIdCall) {
+    this._call = call;
+  }
+
+  get user(): Address {
+    return this._call.inputValues[0].value.toAddress();
+  }
+}
+
+export class RotateVaultIdCall__Outputs {
+  _call: RotateVaultIdCall;
+
+  constructor(call: RotateVaultIdCall) {
     this._call = call;
   }
 }
@@ -2550,6 +2666,36 @@ export class SetTokenEnabledCall__Outputs {
   _call: SetTokenEnabledCall;
 
   constructor(call: SetTokenEnabledCall) {
+    this._call = call;
+  }
+}
+
+export class SetWithdrawalBatchWindowCall extends ethereum.Call {
+  get inputs(): SetWithdrawalBatchWindowCall__Inputs {
+    return new SetWithdrawalBatchWindowCall__Inputs(this);
+  }
+
+  get outputs(): SetWithdrawalBatchWindowCall__Outputs {
+    return new SetWithdrawalBatchWindowCall__Outputs(this);
+  }
+}
+
+export class SetWithdrawalBatchWindowCall__Inputs {
+  _call: SetWithdrawalBatchWindowCall;
+
+  constructor(call: SetWithdrawalBatchWindowCall) {
+    this._call = call;
+  }
+
+  get window(): BigInt {
+    return this._call.inputValues[0].value.toBigInt();
+  }
+}
+
+export class SetWithdrawalBatchWindowCall__Outputs {
+  _call: SetWithdrawalBatchWindowCall;
+
+  constructor(call: SetWithdrawalBatchWindowCall) {
     this._call = call;
   }
 }

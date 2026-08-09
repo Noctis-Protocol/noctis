@@ -422,7 +422,12 @@ export default function DocsPage() {
                   pseudonym</strong>: it rotates every time an order fills or
                   cancels, so your orders never cluster under one id.
                   Withdrawal payouts are batched into time windows to break
-                  fill-to-payout timing. Residual metadata: the pair and
+                  fill-to-payout timing, and support <strong
+                  className="font-semibold text-ink-700">stealth
+                  exits</strong>: the payout destination is encrypted in your
+                  browser and revealed on-chain only when the payout executes,
+                  so funds can land on a fresh address with no prior link to
+                  you. Residual metadata: the pair and
                   direction stay visible in relayed calldata. The relayer can
                   censor or delay, but cannot read amounts, alter the
                   EIP-712-signed parameters, or decrypt vault balances.
@@ -517,11 +522,12 @@ export default function DocsPage() {
                   </table>
                 </div>
                 <p className="mt-6 max-w-[65ch] leading-relaxed text-ink-600">
-                  Withdrawals follow a pull pattern: the user requests a
+                  Withdrawals follow a two-step pattern: the user requests a
                   withdrawal through the encrypted debit path, and once
-                  authorized, claims the funds in a separate transaction. The
-                  recipient is the requester; encrypted destinations are on the
-                  roadmap, not in the MVP.
+                  authorized, the payout executes in a separate transaction.
+                  The destination can be an encrypted stealth address — hidden
+                  on-chain until the payout itself — with ETH pushed directly
+                  so the fresh address never needs gas to receive it.
                 </p>
               </section>
 

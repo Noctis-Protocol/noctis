@@ -12,6 +12,11 @@
   },
   {
     "inputs": [],
+    "name": "BatchWindowTooLong",
+    "type": "error"
+  },
+  {
+    "inputs": [],
     "name": "BelowMinimumDeposit",
     "type": "error"
   },
@@ -301,6 +306,17 @@
   {
     "inputs": [],
     "name": "WithdrawalAlreadyExecuted",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "timeLeft",
+        "type": "uint256"
+      }
+    ],
+    "name": "WithdrawalBatchPending",
     "type": "error"
   },
   {
@@ -757,6 +773,19 @@
     "anonymous": false,
     "inputs": [
       {
+        "indexed": false,
+        "internalType": "uint64",
+        "name": "window",
+        "type": "uint64"
+      }
+    ],
+    "name": "WithdrawalBatchWindowUpdated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
         "indexed": true,
         "internalType": "uint256",
         "name": "requestId",
@@ -914,6 +943,19 @@
         "internalType": "uint256",
         "name": "",
         "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "MAX_WITHDRAWAL_BATCH_WINDOW",
+    "outputs": [
+      {
+        "internalType": "uint64",
+        "name": "",
+        "type": "uint64"
       }
     ],
     "stateMutability": "view",
@@ -1422,6 +1464,11 @@
             "internalType": "uint256",
             "name": "decryptionRequestTime",
             "type": "uint256"
+          },
+          {
+            "internalType": "eaddress",
+            "name": "encRecipient",
+            "type": "bytes32"
           }
         ],
         "internalType": "struct NoctisVaultV2.WithdrawalRequest",
@@ -1679,6 +1726,11 @@
         "type": "bytes32"
       },
       {
+        "internalType": "externalEaddress",
+        "name": "encryptedRecipient",
+        "type": "bytes32"
+      },
+      {
         "internalType": "bytes",
         "name": "inputProof",
         "type": "bytes"
@@ -1704,6 +1756,19 @@
       }
     ],
     "name": "retryWithdrawalExecution",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "user",
+        "type": "address"
+      }
+    ],
+    "name": "rotateVaultId",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"
@@ -1740,6 +1805,19 @@
       }
     ],
     "name": "setTokenEnabled",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint64",
+        "name": "window",
+        "type": "uint64"
+      }
+    ],
+    "name": "setWithdrawalBatchWindow",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"
@@ -1810,6 +1888,19 @@
   },
   {
     "inputs": [],
+    "name": "withdrawalBatchWindow",
+    "outputs": [
+      {
+        "internalType": "uint64",
+        "name": "",
+        "type": "uint64"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
     "name": "withdrawalCounter",
     "outputs": [
       {
@@ -1875,6 +1966,11 @@
         "internalType": "uint256",
         "name": "decryptionRequestTime",
         "type": "uint256"
+      },
+      {
+        "internalType": "eaddress",
+        "name": "encRecipient",
+        "type": "bytes32"
       }
     ],
     "stateMutability": "view",

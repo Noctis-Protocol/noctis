@@ -3,14 +3,15 @@
 /**
  * WithdrawModal Component (V2 — multi-token)
  *
- * Request a withdrawal for any vault-registered token. V2 withdrawals are
- * self-recipient (funds return to the requesting wallet); the amount is
- * encrypted client-side when the FHE relayer is available.
+ * Request a withdrawal for any vault-registered token. The amount AND the
+ * payout destination are encrypted client-side (stealth exits): an optional
+ * private destination address is revealed on-chain only when the payout
+ * executes, so funds can land on a fresh address with no prior link.
  */
 
 import { useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { X, ArrowRight, Lock, CheckCircle } from "lucide-react";
+import { X, ArrowRight, Lock, CheckCircle, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { TokenSelector } from "@/components/ui/TokenSelector";
@@ -30,6 +31,8 @@ export function WithdrawModal({ open, onOpenChange }: WithdrawModalProps) {
   const [amount, setAmount] = useState("");
   const [requestId, setRequestId] = useState<bigint | null>(null);
   const [showSuccess, setShowSuccess] = useState(false);
+  const [stealthMode, setStealthMode] = useState(false);
+  const [stealthRecipient, setStealthRecipient] = useState("");
 
   const token = selected ?? supportedTokens[0] ?? null;
   const limits = useTokenLimits(token);
@@ -47,8 +50,9 @@ export function WithdrawModal({ open, onOpenChange }: WithdrawModalProps) {
     setShowSuccess(false);
     setRequestId(null);
 
-    // V2: withdrawal is self-recipient — only token + amount
-    const newRequestId = await requestWithdrawal(token, amount);
+    // Year 2 stealth exit: optional private destination, encrypted client-side
+    const recipient = stealthMode && stealthRecipient ? stealthRecipient : undefined;
+    const newRequestId = await requestWithdrawal(token, amount, recipient);
 
     if (newRequestId !== null) {
       // Success!
@@ -58,11 +62,18 @@ export function WithdrawModal({ open, onOpenChange }: WithdrawModalProps) {
       // Reset form after showing success message
       setTimeout(() => {
         setAmount("");
+        setStealthRecipient("");
+        setStealthMode(false);
         setShowSuccess(false);
         onOpenChange(false);
       }, 3000);
     }
   };
+
+  const invalidStealthRecipient =
+    stealthMode &&
+    Boolean(stealthRecipient) &&
+    !/^0x[a-fA-F0-9]{40}$/.test(stealthRecipient);
 
   const handleAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (isValidAmountInput(e.target.value)) {
@@ -139,14 +150,47 @@ export function WithdrawModal({ open, onOpenChange }: WithdrawModalProps) {
             )}
           </div>
 
+          {/* Stealth exit (Year 2): optional private destination */}
+          <div className="space-y-2 mb-6">
+            <button
+              type="button"
+              onClick={() => setStealthMode((v) => !v)}
+              className="flex items-center gap-2 text-sm font-medium text-brand-700 hover:text-brand-900"
+            >
+              <EyeOff className="h-4 w-4" />
+              Private destination {stealthMode ? "(on)" : "(off)"}
+            </button>
+            {stealthMode && (
+              <>
+                <Input
+                  type="text"
+                  placeholder="0x… fresh address (revealed only at payout)"
+                  value={stealthRecipient}
+                  onChange={(e) => setStealthRecipient(e.target.value.trim())}
+                  className={cn("text-sm font-mono", invalidStealthRecipient && "border-red-500")}
+                />
+                {invalidStealthRecipient && (
+                  <p className="text-xs text-red-500">Invalid address</p>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  The destination is encrypted in your browser and stays hidden
+                  on-chain until the payout executes. ETH is pushed directly —
+                  the fresh address needs no gas to receive it.
+                </p>
+              </>
+            )}
+          </div>
+
           {/* Privacy info */}
           <div className="flex items-start gap-3 p-3 rounded-xl bg-brand-50 mb-6 text-sm">
             <Lock className="h-4 w-4 text-brand-600 mt-0.5" />
             <div>
               <p className="font-medium text-brand-900">Private Withdrawal</p>
               <p className="text-brand-600 mt-0.5">
-                The amount is encrypted client-side. Funds return to your wallet
-                after the two-step execute flow{token?.isNative ? " (ETH goes to Ready to claim)" : ""}.
+                Amount and destination are encrypted client-side. Funds go to{" "}
+                {stealthMode && stealthRecipient ? "your private destination" : "your wallet"}{" "}
+                after the two-step execute flow
+                {token?.isNative && !(stealthMode && stealthRecipient) ? " (ETH goes to Ready to claim)" : ""}.
               </p>
             </div>
           </div>
@@ -180,7 +224,10 @@ export function WithdrawModal({ open, onOpenChange }: WithdrawModalProps) {
             variant="gradient"
             size="lg"
             className="w-full"
-            disabled={!token || !amount || parseFloat(amount) <= 0 || exceedsCap || isLoading}
+            disabled={
+              !token || !amount || parseFloat(amount) <= 0 || exceedsCap ||
+              invalidStealthRecipient || (stealthMode && !stealthRecipient) || isLoading
+            }
             loading={isLoading}
             onClick={handleWithdraw}
           >

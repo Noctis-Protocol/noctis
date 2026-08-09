@@ -163,6 +163,25 @@ abstract contract GatewayCaller is ZamaEthereumConfig {
     }
 
     /**
+     * @notice Mark amount + sufficiency bool + recipient address as publicly
+     *         decryptable in a single ACL call (stealth-exit withdrawals)
+     * @dev The recipient stays an opaque handle from request time until the
+     *      payout executes — observers cannot see the destination in advance.
+     */
+    function _makePubliclyDecryptableBatchAmountBoolAddress(
+        euint128 amount,
+        ebool hasBalance,
+        eaddress recipient
+    ) internal {
+        bytes32[] memory handles = new bytes32[](3);
+        handles[0] = FHE.toBytes32(amount);
+        handles[1] = FHE.toBytes32(hasBalance);
+        handles[2] = FHE.toBytes32(recipient);
+
+        IACLBatch(_getACLAddress()).allowForDecryption(handles);
+    }
+
+    /**
      * @notice Mark a single euint128 as publicly decryptable via direct ACL call
      * @dev WORKAROUND: FHE.makePubliclyDecryptable() may have issues on some networks.
      *      Using direct ACL call ensures consistent behavior with batch operations.

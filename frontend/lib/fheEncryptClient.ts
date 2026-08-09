@@ -22,6 +22,7 @@ interface BrowserFheInstance {
     userAddress: string
   ) => {
     add128: (value: bigint) => void;
+    addAddress: (value: string) => void;
     encrypt: () => Promise<{ handles: Uint8Array[]; inputProof: Uint8Array }>;
   };
 }
@@ -75,6 +76,34 @@ export async function encryptAmount128(
   input.add128(amount);
   const { handles, inputProof } = await input.encrypt();
   return { encryptedAmount: toHex(handles[0]), inputProof: toHex(inputProof) };
+}
+
+/**
+ * PRIVACY (Year 2, stealth exits): encrypt a withdrawal intent — amount AND
+ * payout destination — fully in the browser. The recipient stays an opaque
+ * FHE handle on-chain until the payout executes, so a fresh address receives
+ * the funds with no prior on-chain link to the requester.
+ */
+export async function encryptWithdrawalIntent(
+  vaultAddress: string,
+  userAddress: string,
+  amount: bigint,
+  recipient: string
+): Promise<{
+  encryptedAmount: `0x${string}`;
+  encryptedRecipient: `0x${string}`;
+  inputProof: `0x${string}`;
+}> {
+  const instance = await getBrowserInstance();
+  const input = instance.createEncryptedInput(vaultAddress, userAddress);
+  input.add128(amount);
+  input.addAddress(recipient);
+  const { handles, inputProof } = await input.encrypt();
+  return {
+    encryptedAmount: toHex(handles[0]),
+    encryptedRecipient: toHex(handles[1]),
+    inputProof: toHex(inputProof),
+  };
 }
 
 /**

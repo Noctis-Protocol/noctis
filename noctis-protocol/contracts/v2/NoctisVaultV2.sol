@@ -84,7 +84,7 @@ contract NoctisVaultV2 is ReentrancyGuard, Pausable, Ownable, GatewayCaller {
 
     struct WithdrawalRequest {
         uint256 requestId;
-        address requester;              // withdrawal recipient (MVP: self only)
+        address requester;              // balance debited + limits keyed here
         address token;                  // NATIVE for ETH
         euint128 encryptedAmount;
         ebool hasSufficientBalance;     // FHE.ge(balance, amount) at request time
@@ -92,6 +92,11 @@ contract NoctisVaultV2 is ReentrancyGuard, Pausable, Ownable, GatewayCaller {
         bool executed;
         bool decryptionRequested;
         uint256 decryptionRequestTime;
+        /// @dev PRIVACY (Year 2, stealth exits): encrypted payout destination.
+        ///      Unset (handle 0) on the plaintext path = pay the requester.
+        ///      Revealed only at execution — observers cannot see where funds
+        ///      will land between request and payout.
+        eaddress encRecipient;
     }
 
     mapping(uint256 => WithdrawalRequest) public withdrawalRequests;
@@ -503,24 +508,35 @@ contract NoctisVaultV2 is ReentrancyGuard, Pausable, Ownable, GatewayCaller {
         if (amount > tokenConfigs[token].maxWithdrawal) revert ExceedsMaximumWithdrawal();
 
         euint128 encryptedAmount = FHE.asEuint128(amount);
-        return _createWithdrawal(token, encryptedAmount);
+        return _createWithdrawal(token, encryptedAmount, eaddress.wrap(0));
     }
 
     /**
-     * @notice Request a withdrawal with a client-side encrypted amount (mempool privacy)
-     * @dev Amount is not visible in tx input data. Max-withdrawal bound is enforced
-     *      at callback time on the proven cleartext.
+     * @notice Request a withdrawal with client-side encrypted amount AND recipient
+     * @dev PRIVACY (Year 2, stealth exits): neither the amount nor the payout
+     *      destination is visible in tx input data. The recipient is revealed
+     *      only when the payout executes (quantized to the batch window), so a
+     *      fresh address receives the funds with no prior on-chain link to the
+     *      requester besides tx timing. Max-withdrawal bound is enforced at
+     *      callback time on the proven cleartext. Encrypt your own address to
+     *      keep a self-withdrawal.
      */
     function requestWithdrawalPrivate(
         address token,
         externalEuint128 encryptedAmount,
+        externalEaddress encryptedRecipient,
         bytes calldata inputProof
     ) external nonReentrant whenNotPaused onlySupported(token) returns (uint256) {
         euint128 encAmount = FHE.fromExternal(encryptedAmount, inputProof);
-        return _createWithdrawal(token, encAmount);
+        eaddress encRecipient = FHE.fromExternal(encryptedRecipient, inputProof);
+        return _createWithdrawal(token, encAmount, encRecipient);
     }
 
-    function _createWithdrawal(address token, euint128 encAmount) private returns (uint256) {
+    function _createWithdrawal(
+        address token,
+        euint128 encAmount,
+        eaddress encRecipient
+    ) private returns (uint256) {
         if (pendingWithdrawalCount[msg.sender] >= MAX_PENDING_WITHDRAWALS_PER_USER) {
             revert TooManyPendingWithdrawals();
         }
@@ -538,6 +554,9 @@ contract NoctisVaultV2 is ReentrancyGuard, Pausable, Ownable, GatewayCaller {
 
         FHE.allowThis(encAmount);
         FHE.allowThis(hasSufficientBalance);
+        if (eaddress.unwrap(encRecipient) != 0) {
+            FHE.allowThis(encRecipient);
+        }
 
         uint256 requestId = ++withdrawalCounter;
         withdrawalRequests[requestId] = WithdrawalRequest({
@@ -549,7 +568,8 @@ contract NoctisVaultV2 is ReentrancyGuard, Pausable, Ownable, GatewayCaller {
             requestTime: block.timestamp,
             executed: false,
             decryptionRequested: false,
-            decryptionRequestTime: 0
+            decryptionRequestTime: 0,
+            encRecipient: encRecipient
         });
 
         pendingWithdrawalCount[msg.sender]++;
@@ -584,12 +604,25 @@ contract NoctisVaultV2 is ReentrancyGuard, Pausable, Ownable, GatewayCaller {
 
         FHE.allowThis(request.encryptedAmount);
         FHE.allowThis(request.hasSufficientBalance);
-        // Batch ACL call (works around consecutive makePubliclyDecryptable issue)
-        _makePubliclyDecryptableBatchAmountBool(request.encryptedAmount, request.hasSufficientBalance);
 
-        bytes32[] memory handles = new bytes32[](2);
-        handles[0] = FHE.toBytes32(request.encryptedAmount);
-        handles[1] = FHE.toBytes32(request.hasSufficientBalance);
+        bytes32[] memory handles;
+        if (eaddress.unwrap(request.encRecipient) != 0) {
+            // Stealth exit: recipient revealed at the same decrypt step
+            FHE.allowThis(request.encRecipient);
+            _makePubliclyDecryptableBatchAmountBoolAddress(
+                request.encryptedAmount, request.hasSufficientBalance, request.encRecipient
+            );
+            handles = new bytes32[](3);
+            handles[0] = FHE.toBytes32(request.encryptedAmount);
+            handles[1] = FHE.toBytes32(request.hasSufficientBalance);
+            handles[2] = FHE.toBytes32(request.encRecipient);
+        } else {
+            // Batch ACL call (works around consecutive makePubliclyDecryptable issue)
+            _makePubliclyDecryptableBatchAmountBool(request.encryptedAmount, request.hasSufficientBalance);
+            handles = new bytes32[](2);
+            handles[0] = FHE.toBytes32(request.encryptedAmount);
+            handles[1] = FHE.toBytes32(request.hasSufficientBalance);
+        }
 
         emit DecryptionReady(requestId, handles);
     }
@@ -632,15 +665,37 @@ contract NoctisVaultV2 is ReentrancyGuard, Pausable, Ownable, GatewayCaller {
             revert DecryptionTimeoutExceeded();
         }
 
-        bytes32[] memory handles = new bytes32[](2);
-        handles[0] = FHE.toBytes32(request.encryptedAmount);
-        handles[1] = FHE.toBytes32(request.hasSufficientBalance);
-        FHE.checkSignatures(handles, cleartexts, decryptionProof);
+        // PRIVACY (Year 2): stealth exits decode a third field — the payout
+        // destination, hidden until this very step.
+        uint128 decryptedAmount;
+        bool hasSufficientBalance;
+        address recipient;
+        {
+            bool stealth = eaddress.unwrap(request.encRecipient) != 0;
+            bytes32[] memory handles = new bytes32[](stealth ? 3 : 2);
+            handles[0] = FHE.toBytes32(request.encryptedAmount);
+            handles[1] = FHE.toBytes32(request.hasSufficientBalance);
+            if (stealth) handles[2] = FHE.toBytes32(request.encRecipient);
+            FHE.checkSignatures(handles, cleartexts, decryptionProof);
 
-        (uint128 decryptedAmount, bool hasSufficientBalance) = abi.decode(cleartexts, (uint128, bool));
+            if (stealth) {
+                address decodedRecipient;
+                (decryptedAmount, hasSufficientBalance, decodedRecipient) =
+                    abi.decode(cleartexts, (uint128, bool, address));
+                // Foot-gun guards: zero / vault itself fall back to the requester
+                recipient = (decodedRecipient == address(0) || decodedRecipient == address(this))
+                    ? request.requester
+                    : decodedRecipient;
+            } else {
+                (decryptedAmount, hasSufficientBalance) = abi.decode(cleartexts, (uint128, bool));
+                recipient = request.requester;
+            }
+        }
 
         address token = request.token;
-        address recipient = request.requester;
+        // Limits, pattern detection and pending count stay keyed on the
+        // REQUESTER — a stealth destination must not reset per-user caps.
+        address requester = request.requester;
 
         // Defense-in-depth validations on the proven cleartext
         if (decryptedAmount == 0) {
@@ -666,8 +721,8 @@ contract NoctisVaultV2 is ReentrancyGuard, Pausable, Ownable, GatewayCaller {
         // nothing to restore. Mark handled and stop.
         if (!hasSufficientBalance) {
             request.executed = true;
-            if (pendingWithdrawalCount[recipient] > 0) {
-                pendingWithdrawalCount[recipient]--;
+            if (pendingWithdrawalCount[requester] > 0) {
+                pendingWithdrawalCount[requester]--;
             }
             emit SuspiciousDecryptedValue(requestId, decryptedAmount, "Amount exceeds user balance");
             emit WithdrawalExecutionFailed(requestId);
@@ -676,21 +731,32 @@ contract NoctisVaultV2 is ReentrancyGuard, Pausable, Ownable, GatewayCaller {
 
         // Circuit breakers + pattern monitoring. When the per-token daily cap trips,
         // the protocol pauses and the request stays pending (retry after unpause).
-        if (!_validateWithdrawalLimits(recipient, token, decryptedAmount)) {
+        if (!_validateWithdrawalLimits(requester, token, decryptedAmount)) {
             emit WithdrawalExecutionFailed(requestId);
             return;
         }
 
         // Effects before interactions
         request.executed = true;
-        if (pendingWithdrawalCount[recipient] > 0) {
-            pendingWithdrawalCount[recipient]--;
+        if (pendingWithdrawalCount[requester] > 0) {
+            pendingWithdrawalCount[requester]--;
         }
 
         if (token == NATIVE) {
-            // M-3: pull-over-push (malicious recipient contracts cannot block flow)
-            claimableETH[recipient] += decryptedAmount;
-            emit ClaimableBalanceUpdated(recipient, decryptedAmount, claimableETH[recipient]);
+            if (recipient != requester) {
+                // Stealth exit: a fresh address has no gas to pull — push first
+                // (state already settled, reentrancy guarded), fall back to the
+                // claimable pattern if the recipient rejects the transfer.
+                (bool sent, ) = recipient.call{value: decryptedAmount}("");
+                if (!sent) {
+                    claimableETH[recipient] += decryptedAmount;
+                    emit ClaimableBalanceUpdated(recipient, decryptedAmount, claimableETH[recipient]);
+                }
+            } else {
+                // M-3: pull-over-push (malicious recipient contracts cannot block flow)
+                claimableETH[recipient] += decryptedAmount;
+                emit ClaimableBalanceUpdated(recipient, decryptedAmount, claimableETH[recipient]);
+            }
         } else {
             IERC20(token).safeTransfer(recipient, decryptedAmount);
         }
