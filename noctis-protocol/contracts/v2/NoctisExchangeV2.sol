@@ -131,6 +131,11 @@ contract NoctisExchangeV2 is ReentrancyGuard, Pausable, AccessControl, GatewayCa
 
     uint16 public feeBps = 5;
     address public feeRecipient;
+    /// @notice Receives gas-in-kind refunds at settlement (relayer float wallet).
+    /// @dev Separate from feeRecipient so the relayer self-funds without a
+    ///      treasury round-trip. No privacy impact: recipients and amounts are
+    ///      already public via ProtocolFeeCollected/GasRefundCollected events.
+    address public gasRecipient;
 
     uint128 public maxGasRefundWei = 0.01 ether;
     mapping(uint256 => uint128) private orderGasRefundWei;
@@ -205,6 +210,7 @@ contract NoctisExchangeV2 is ReentrancyGuard, Pausable, AccessControl, GatewayCa
     event MaxOrdersPerBlockUpdated(uint256 oldMax, uint256 newMax);
     event ProtocolFeeCollected(uint256 indexed orderId, address indexed token, uint256 feeAmount, address indexed recipient);
     event FeeRecipientUpdated(address indexed oldRecipient, address indexed newRecipient);
+    event GasRecipientUpdated(address indexed oldRecipient, address indexed newRecipient);
     event GasRefundCollected(uint256 indexed orderId, address indexed token, uint256 refundAmount);
     event MaxGasRefundUpdated(uint128 oldMax, uint128 newMax);
     event FeeBpsUpdated(uint16 oldFeeBps, uint16 newFeeBps);
@@ -258,6 +264,7 @@ contract NoctisExchangeV2 is ReentrancyGuard, Pausable, AccessControl, GatewayCa
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(PAUSER_ROLE, msg.sender);
         feeRecipient = msg.sender;
+        gasRecipient = msg.sender;
     }
 
     // ============================================
@@ -806,9 +813,7 @@ contract NoctisExchangeV2 is ReentrancyGuard, Pausable, AccessControl, GatewayCa
             uint256 netOut = amountOut - fee - gasRefund;
 
             if (fee + gasRefund > 0) {
-                usdc.safeTransfer(feeRecipient, fee + gasRefund);
-                if (fee > 0) emit ProtocolFeeCollected(orderId, address(usdc), fee, feeRecipient);
-                if (gasRefund > 0) emit GasRefundCollected(orderId, address(usdc), gasRefund);
+                _payFees(orderId, address(usdc), fee, gasRefund);
             }
 
             // Settlement: move USDC into the vault BEFORE crediting the encrypted balance
@@ -913,17 +918,26 @@ contract NoctisExchangeV2 is ReentrancyGuard, Pausable, AccessControl, GatewayCa
         return (gasRefundWei * ethPrice * (10 ** uint256(cfg.baseDecimals))) / (basePrice * 1e18);
     }
 
-    /// @dev Send fee + gas refund (denominated in the BUY output token) to the treasury
-    function _payFees(uint256 orderId, address baseToken, uint256 fee, uint256 gasRefund) internal {
-        uint256 total = fee + gasRefund;
-        if (baseToken == NATIVE) {
-            (bool feeOk, ) = feeRecipient.call{value: total}("");
-            if (!feeOk) revert FeeTransferFailed();
-        } else {
-            IERC20(baseToken).safeTransfer(feeRecipient, total);
+    /// @dev Split payout at settlement: protocol fee to the treasury (feeRecipient),
+    ///      gas-in-kind refund to the relayer float (gasRecipient) — no round-trip.
+    function _payFees(uint256 orderId, address token, uint256 fee, uint256 gasRefund) internal {
+        if (fee > 0) {
+            _payOut(token, feeRecipient, fee);
+            emit ProtocolFeeCollected(orderId, token, fee, feeRecipient);
         }
-        if (fee > 0) emit ProtocolFeeCollected(orderId, baseToken, fee, feeRecipient);
-        if (gasRefund > 0) emit GasRefundCollected(orderId, baseToken, gasRefund);
+        if (gasRefund > 0) {
+            _payOut(token, gasRecipient, gasRefund);
+            emit GasRefundCollected(orderId, token, gasRefund);
+        }
+    }
+
+    function _payOut(address token, address to, uint256 amount) private {
+        if (token == NATIVE) {
+            (bool ok, ) = to.call{value: amount}("");
+            if (!ok) revert FeeTransferFailed();
+        } else {
+            IERC20(token).safeTransfer(to, amount);
+        }
     }
 
     /// @dev Deduct from the vault via the sufficiency-proof path (vaultId if available)
@@ -1063,6 +1077,12 @@ contract NoctisExchangeV2 is ReentrancyGuard, Pausable, AccessControl, GatewayCa
         if (newRecipient == address(0)) revert InvalidFeeRecipient();
         emit FeeRecipientUpdated(feeRecipient, newRecipient);
         feeRecipient = newRecipient;
+    }
+
+    function setGasRecipient(address newRecipient) external onlyTimelockOrRole(PARAMS_ROLE) {
+        if (newRecipient == address(0)) revert InvalidFeeRecipient();
+        emit GasRecipientUpdated(gasRecipient, newRecipient);
+        gasRecipient = newRecipient;
     }
 
     function setMaxGasRefundWei(uint128 newMax) external onlyTimelockOrRole(PARAMS_ROLE) {

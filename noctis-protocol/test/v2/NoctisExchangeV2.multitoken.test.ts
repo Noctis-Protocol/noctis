@@ -399,6 +399,82 @@ describe("NoctisExchangeV2 - Multi-Pair Trading (Mock Mode)", function () {
     });
   });
 
+  // Gas refund split --------------------------------------------------------------
+  // Fee goes to the treasury (feeRecipient) while the gas-in-kind refund goes to
+  // the relayer float wallet (gasRecipient) — the relayer self-funds without a
+  // Safe -> keeper round-trip.
+
+  describe("gas refund split (fee -> treasury, refund -> gasRecipient)", function () {
+    const GAS_REFUND_WEI = ethers.parseEther("0.001"); // signed off-chain by the user
+
+    it("SELL via relayer: refund converted to USDC lands on gasRecipient, fee on feeRecipient", async function () {
+      const [, , , treasury, gasWallet] = await ethers.getSigners();
+      await exchange.setFeeRecipient(treasury.address);
+      await exchange.setGasRecipient(gasWallet.address);
+      await exchange.grantRole(await exchange.RELAYER_ROLE(), owner.address);
+
+      await depositToVault(wbtc, E8(1));
+      const vaultId = await vault.connect(user).getMyVaultId();
+
+      const tx = await exchange.createMarketOrderViaRelayer(
+        vaultId, wbtcAddress, E8(0.5), false, 100, 150, GAS_REFUND_WEI
+      );
+      const orderId = parseEvent(await tx.wait(), "OrderCreated").orderId;
+
+      const handles = await requestExecution(orderId);
+      const receipt = await executeSell(orderId, handles);
+      expect(parseEvent(receipt, "OrderFilledSimple")).to.not.be.null;
+
+      // out = 0.5e8 * 598 = 29,900 USDC; fee 5 bps; refund 0.001 ETH * $3000 = 3 USDC
+      const grossOut = E8(0.5) * 598n;
+      const fee = (grossOut * 5n) / 10_000n;
+      const refundUsdc = (GAS_REFUND_WEI * PRICE_ETH) / 10n ** 20n;
+      expect(refundUsdc).to.equal(E6(3));
+
+      expect(await usdc.balanceOf(treasury.address)).to.equal(fee);
+      expect(await usdc.balanceOf(gasWallet.address)).to.equal(refundUsdc);
+      expect(await usdc.balanceOf(vaultAddress)).to.equal(grossOut - fee - refundUsdc);
+
+      const refundArgs = parseEvent(receipt, "GasRefundCollected");
+      expect(refundArgs.token).to.equal(usdcAddress);
+      expect(refundArgs.refundAmount).to.equal(refundUsdc);
+    });
+
+    it("BUY via relayer: refund converted to base units lands on gasRecipient", async function () {
+      const [, , , treasury, gasWallet] = await ethers.getSigners();
+      await exchange.setFeeRecipient(treasury.address);
+      await exchange.setGasRecipient(gasWallet.address);
+      await exchange.grantRole(await exchange.RELAYER_ROLE(), owner.address);
+
+      await depositToVault(usdc, E6(50_000));
+      const vaultId = await vault.connect(user).getMyVaultId();
+
+      const tx = await exchange.createMarketOrderViaRelayer(
+        vaultId, wbtcAddress, E8(0.5), true, 100, 150, GAS_REFUND_WEI
+      );
+      const orderId = parseEvent(await tx.wait(), "OrderCreated").orderId;
+
+      const handles = await requestExecution(orderId);
+      await executeBuy(orderId, handles);
+
+      // refund in WBTC: wei * ethUsd * 10^8 / (wbtcUsd * 1e18)
+      const refundWbtc = (GAS_REFUND_WEI * PRICE_ETH * 10n ** 8n) / (PRICE_WBTC * 10n ** 18n);
+      expect(refundWbtc).to.equal(5000n); // 0.00005 WBTC
+
+      expect(await wbtc.balanceOf(gasWallet.address)).to.equal(refundWbtc);
+      expect(await wbtc.balanceOf(treasury.address)).to.be.gt(0n); // fee in WBTC
+    });
+
+    it("setGasRecipient is PARAMS_ROLE/timelock gated and rejects the zero address", async function () {
+      await expect(
+        exchange.connect(attacker).setGasRecipient.staticCall(attacker.address)
+      ).to.be.reverted;
+      await expect(
+        exchange.setGasRecipient.staticCall(ethers.ZeroAddress)
+      ).to.be.revertedWithCustomError(exchange, "InvalidFeeRecipient");
+    });
+  });
+
   // Cancellation --------------------------------------------------------------------
 
   describe("cancellation and lock restore", function () {
