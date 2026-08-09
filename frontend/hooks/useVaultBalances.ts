@@ -1,103 +1,86 @@
 /**
- * useVaultBalances Hook
- * 
- * Reads encrypted balances from NoctisVault contract.
- * Note: Balances are encrypted (bytes32), so they need re-encryption to display.
- * For now, we check if balance exists (non-zero bytes32) to show "has balance" vs "empty".
- * 
+ * useVaultBalances Hook (V2 — multi-token)
+ *
+ * Reads encrypted balance handles from NoctisVaultV2 for every supported
+ * token (address(0) = native ETH). Handles are opaque bytes32 — a non-zero
+ * handle means the balance slot was initialized (deposited at least once).
+ *
  * Updates on:
- * - Relevant contract events (deposits, withdrawals, orders)
- * - Polling interval (every 10 seconds)
+ * - noctis:refresh-balance / noctis:refresh-activity events
  * - Manual refetch calls
+ * NO automatic polling to avoid RPC rate-limiting (429 errors).
  */
 
 "use client";
 
-import { useAccount, useChainId, useReadContract } from "wagmi";
-import { useEffect, useCallback } from "react";
-// Note: useChainId imported but used for potential future chain-specific logic
+import { useAccount, useReadContracts } from "wagmi";
+import { useEffect, useCallback, useMemo } from "react";
 import { NoctisVaultABI } from "@/lib/contracts/abi";
 import { useContractAddresses } from "@/lib/wagmi";
+import { useTokenRegistry } from "./useTokenRegistry";
 
-// NO automatic polling to avoid RPC rate-limiting (429 errors)
-// Balances refresh only on manual action or after transactions
+const ZERO_HANDLE =
+  "0x0000000000000000000000000000000000000000000000000000000000000000";
 
 interface UseVaultBalancesReturn {
-  // Encrypted balances (euint128 returned as uint256 - cannot be decrypted without Gateway)
-  encryptedETHBalance: bigint | undefined;
-  encryptedUSDTBalance: bigint | undefined;
-  // Status
+  /** token address (lowercase) → encrypted balance handle (bytes32) */
+  balanceHandles: Record<string, `0x${string}` | undefined>;
+  /** True when the token's encrypted balance slot is initialized */
+  hasBalance: (tokenAddress: string | undefined | null) => boolean;
   isLoading: boolean;
-  hasETHBalance: boolean; // true if balance is non-zero
-  hasUSDTBalance: boolean; // true if balance is non-zero
-  // Error
   error: string | null;
-  // Manual refetch (call after deposit/withdrawal confirmation)
+  /** Manual refetch (call after deposit/withdrawal confirmation) */
   refetchBalances: () => void;
 }
 
 export function useVaultBalances(): UseVaultBalancesReturn {
   const { address, isConnected } = useAccount();
-  const chainId = useChainId();
   const contracts = useContractAddresses();
+  const { supportedTokens } = useTokenRegistry();
 
-  // Read encrypted ETH balance via getEncryptedBalance(address, isEth=true)
-  const {
-    data: encryptedETHBalance,
-    isLoading: isLoadingETH,
-    isFetching: isFetchingETH,
-    error: errorETH,
-    refetch: refetchETH,
-  } = useReadContract({
-    abi: NoctisVaultABI,
-    address: contracts?.vaultAddress as `0x${string}` | undefined,
-    functionName: "getEncryptedBalance",
-    args: address ? [address, true] : undefined,
+  const vaultAddress = contracts?.vaultAddress as `0x${string}` | undefined;
+
+  const { data, isLoading, error, refetch } = useReadContracts({
+    contracts: supportedTokens.map((token) => ({
+      abi: NoctisVaultABI,
+      address: vaultAddress,
+      functionName: "getEncryptedBalance" as const,
+      args: [address as `0x${string}`, token.address] as const,
+    })),
     query: {
-      enabled: isConnected && !!address && !!contracts?.vaultAddress,
+      enabled:
+        isConnected &&
+        !!address &&
+        !!vaultAddress &&
+        supportedTokens.length > 0,
       refetchOnWindowFocus: false,
     },
   });
 
-  // Read encrypted USDT balance via getEncryptedBalance(address, isEth=false)
-  const {
-    data: encryptedUSDTBalance,
-    isLoading: isLoadingUSDT,
-    isFetching: isFetchingUSDT,
-    error: errorUSDT,
-    refetch: refetchUSDT,
-  } = useReadContract({
-    abi: NoctisVaultABI,
-    address: contracts?.vaultAddress as `0x${string}` | undefined,
-    functionName: "getEncryptedBalance",
-    args: address ? [address, false] : undefined,
-    query: {
-      enabled: isConnected && !!address && !!contracts?.vaultAddress,
-      refetchOnWindowFocus: false,
+  const balanceHandles = useMemo(() => {
+    const map: Record<string, `0x${string}` | undefined> = {};
+    supportedTokens.forEach((token, index) => {
+      const result = data?.[index];
+      map[token.address.toLowerCase()] =
+        result?.status === "success" ? (result.result as `0x${string}`) : undefined;
+    });
+    return map;
+  }, [supportedTokens, data]);
+
+  const hasBalance = useCallback(
+    (tokenAddress: string | undefined | null): boolean => {
+      if (!tokenAddress) return false;
+      const handle = balanceHandles[tokenAddress.toLowerCase()];
+      return Boolean(handle && handle !== ZERO_HANDLE);
     },
-  });
-
-  // Check if balances are non-zero
-  // euint128 is returned as uint256, zero balance = 0
-  const hasETHBalance = encryptedETHBalance
-    ? BigInt(encryptedETHBalance) > 0n
-    : false;
-  const hasUSDTBalance = encryptedUSDTBalance
-    ? BigInt(encryptedUSDTBalance) > 0n
-    : false;
-
-  const error = errorETH || errorUSDT ? "Failed to load balances" : null;
-
-  // Only show loading state on initial load, not on background refetch
-  // This prevents blinking when data is refreshed every 10 seconds
-  const isInitialLoading = (isLoadingETH && !encryptedETHBalance) || (isLoadingUSDT && !encryptedUSDTBalance);
+    [balanceHandles]
+  );
 
   // Manual refetch function for after transaction confirmation
   const refetchBalances = useCallback(() => {
     console.log("🔄 Manual balance refetch triggered");
-    refetchETH();
-    refetchUSDT();
-  }, [refetchETH, refetchUSDT]);
+    refetch();
+  }, [refetch]);
 
   // Listen for refresh events (triggered after transactions)
   useEffect(() => {
@@ -105,10 +88,10 @@ export function useVaultBalances(): UseVaultBalancesReturn {
       console.log("🔄 Balance refetch triggered by event");
       refetchBalances();
     };
-    
+
     window.addEventListener("noctis:refresh-balance", handleRefresh);
     window.addEventListener("noctis:refresh-activity", handleRefresh);
-    
+
     return () => {
       window.removeEventListener("noctis:refresh-balance", handleRefresh);
       window.removeEventListener("noctis:refresh-activity", handleRefresh);
@@ -116,12 +99,10 @@ export function useVaultBalances(): UseVaultBalancesReturn {
   }, [refetchBalances]);
 
   return {
-    encryptedETHBalance: encryptedETHBalance as bigint | undefined,
-    encryptedUSDTBalance: encryptedUSDTBalance as bigint | undefined,
-    isLoading: isInitialLoading,
-    hasETHBalance,
-    hasUSDTBalance,
-    error,
+    balanceHandles,
+    hasBalance,
+    isLoading,
+    error: error ? "Failed to load balances" : null,
     refetchBalances,
   };
 }

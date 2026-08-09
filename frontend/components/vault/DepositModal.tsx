@@ -1,47 +1,59 @@
 "use client";
 
 /**
- * DepositModal Component
- * 
- * Modal for depositing ETH or USDC into the vault.
- * Shows step progress for multi-step transactions.
+ * DepositModal Component (V2 — multi-token)
+ *
+ * Deposit any vault-registered token: native ETH (depositETH) or
+ * ERC-20 (approve + depositToken). Token list comes from the on-chain
+ * registry; limits from tokenConfigs.
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { X, ArrowRight, AlertCircle, CheckCircle } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useNoctisVault, useVaultBalances, useBalanceTracker } from "@/hooks";
+import { TokenSelector } from "@/components/ui/TokenSelector";
+import {
+  useNoctisVault,
+  useVaultBalances,
+  useBalanceTracker,
+  useTokenRegistry,
+  useTokenLimits,
+  parseTokenAmount,
+} from "@/hooks";
+import type { TokenInfo } from "@/hooks";
 import { cn, isValidAmountInput } from "@/lib/utils";
-import { DEPOSIT_LIMITS, validateDepositAmount } from "@/lib/validation";
+import { validateAmountWithLimits, quickAmountsFor } from "@/lib/validation";
 
 interface DepositModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
-type DepositToken = "ETH" | "USDC";
-
 export function DepositModal({ open, onOpenChange }: DepositModalProps) {
-  const [token, setToken] = useState<DepositToken>("ETH");
+  const { supportedTokens, isLoading: registryLoading } = useTokenRegistry();
+  const [selected, setSelected] = useState<TokenInfo | null>(null);
   const [amount, setAmount] = useState("");
   const [validationError, setValidationError] = useState<string | null>(null);
-  
+
+  // Default to the first supported token (native ETH sorts first)
+  const token = selected ?? supportedTokens[0] ?? null;
+  const limits = useTokenLimits(token);
+
   // Get refetchBalances from vault balances hook
   const { refetchBalances } = useVaultBalances();
-  
+
   // Get balance tracker
   const { addTransaction } = useBalanceTracker();
-  
+
   // Pass callbacks to refresh balances and track deposits
-  const { depositETH, depositUSDT, isLoading, error: transactionError } = useNoctisVault({
+  const { depositETH, depositToken, isLoading, error: transactionError } = useNoctisVault({
     onDepositSuccess: refetchBalances,
-    onDepositTracked: (depositAmount, depositToken, txHash) => {
+    onDepositTracked: (depositAmount, depositTokenSymbol, txHash) => {
       addTransaction({
         type: "deposit",
-        token: depositToken as "ETH" | "USDC",
+        token: depositTokenSymbol,
         amount: depositAmount,
         timestamp: Date.now(),
         txHash,
@@ -49,28 +61,37 @@ export function DepositModal({ open, onOpenChange }: DepositModalProps) {
     },
   });
 
-  // Real-time validation
+  const quickAmounts = useMemo(
+    () => (token ? quickAmountsFor(token.symbol) : []),
+    [token]
+  );
+
+  // Real-time validation against on-chain limits
   useEffect(() => {
-    if (amount) {
-      const result = validateDepositAmount(amount, token);
+    if (amount && token) {
+      const result = validateAmountWithLimits(
+        amount,
+        token.symbol,
+        limits.minDeposit,
+        limits.maxDeposit
+      );
       setValidationError(result.error || null);
     } else {
       setValidationError(null);
     }
-  }, [amount, token]);
+  }, [amount, token, limits.minDeposit, limits.maxDeposit]);
 
   const handleDeposit = async () => {
-    if (!amount || parseFloat(amount) <= 0 || validationError) return;
+    if (!token || !amount || parseFloat(amount) <= 0 || validationError) return;
 
     let success = false;
-    
+
     try {
-      if (token === "ETH") {
+      if (token.isNative) {
         success = await depositETH(amount);
       } else {
-        // Convert USDC amount to 6 decimals
-        const amountBigInt = BigInt(Math.floor(parseFloat(amount) * 1e6));
-        success = await depositUSDT(amountBigInt);
+        const amountBigInt = parseTokenAmount(amount, token.decimals);
+        success = await depositToken(token, amountBigInt);
       }
 
       // Only reset and close on confirmed success
@@ -118,39 +139,44 @@ export function DepositModal({ open, onOpenChange }: DepositModalProps) {
             </Dialog.Close>
           </div>
 
-          {/* Token selection */}
-          <div className="flex gap-2 mb-4">
-            {(["ETH", "USDC"] as DepositToken[]).map((t) => (
-              <Button
-                key={t}
-                variant={token === t ? "default" : "outline"}
-                className="flex-1"
-                onClick={() => setToken(t)}
-              >
-                {t}
-              </Button>
-            ))}
+          {/* Token selection (dynamic registry) */}
+          <div className="mb-4">
+            <label className="text-xs text-muted-foreground mb-2 block">
+              Token
+            </label>
+            <TokenSelector
+              tokens={supportedTokens}
+              selected={token}
+              onSelect={(t) => {
+                setSelected(t);
+                setAmount("");
+              }}
+              disabled={registryLoading}
+              ariaLabel="Select deposit token"
+            />
           </div>
 
           {/* Quick amounts */}
-          <div className="mb-4">
-            <label className="text-xs text-muted-foreground mb-2 block">
-              Quick amounts
-            </label>
-            <div className="flex gap-2">
-              {DEPOSIT_LIMITS[token].QUICK_AMOUNTS.map((quickAmount) => (
-                <Button
-                  key={quickAmount}
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleQuickAmount(quickAmount)}
-                  className="flex-1 text-xs"
-                >
-                  {quickAmount}
-                </Button>
-              ))}
+          {quickAmounts.length > 0 && (
+            <div className="mb-4">
+              <label className="text-xs text-muted-foreground mb-2 block">
+                Quick amounts
+              </label>
+              <div className="flex gap-2">
+                {quickAmounts.map((quickAmount) => (
+                  <Button
+                    key={quickAmount}
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleQuickAmount(quickAmount)}
+                    className="flex-1 text-xs"
+                  >
+                    {quickAmount}
+                  </Button>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Amount input */}
           <div className="space-y-2 mb-6">
@@ -159,7 +185,11 @@ export function DepositModal({ open, onOpenChange }: DepositModalProps) {
               <Input
                 type="text"
                 inputMode="decimal"
-                placeholder={`Min: ${DEPOSIT_LIMITS[token].MIN} ${token}`}
+                placeholder={
+                  limits.minDeposit !== undefined && token
+                    ? `Min: ${limits.minDeposit} ${token.symbol}`
+                    : "0.0"
+                }
                 value={amount}
                 onChange={handleAmountChange}
                 className={cn(
@@ -168,10 +198,10 @@ export function DepositModal({ open, onOpenChange }: DepositModalProps) {
                 )}
               />
               <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground">
-                {token}
+                {token?.symbol ?? ""}
               </span>
             </div>
-            
+
             {/* Validation feedback */}
             {validationError ? (
               <p className="text-xs text-red-500 flex items-center gap-1">
@@ -184,17 +214,21 @@ export function DepositModal({ open, onOpenChange }: DepositModalProps) {
                 Valid amount
               </p>
             )}
-            
-            {/* Helper text */}
-            <p className="text-xs text-muted-foreground">
-              Limits: {DEPOSIT_LIMITS[token].MIN} - {DEPOSIT_LIMITS[token].MAX.toLocaleString()} {token}
-            </p>
+
+            {/* Helper text (on-chain limits) */}
+            {token && limits.minDeposit !== undefined && (
+              <p className="text-xs text-muted-foreground">
+                Limits: {limits.minDeposit} –{" "}
+                {limits.maxDeposit?.toLocaleString() ?? "∞"} {token.symbol}
+              </p>
+            )}
           </div>
 
           {/* Info */}
           <div className="p-3 rounded-xl bg-muted mb-4 text-sm text-muted-foreground">
             <p>
               Your deposit will be encrypted using FHE. Only you can view your balance.
+              {token && !token.isNative && " ERC-20 deposits need an approval transaction first."}
             </p>
           </div>
 
@@ -211,11 +245,11 @@ export function DepositModal({ open, onOpenChange }: DepositModalProps) {
             variant="gradient"
             size="lg"
             className="w-full"
-            disabled={!amount || !!validationError || isLoading}
+            disabled={!token || !amount || !!validationError || isLoading}
             loading={isLoading}
             onClick={handleDeposit}
           >
-            {isLoading ? "Depositing..." : `Deposit ${token}`}
+            {isLoading ? "Depositing..." : `Deposit ${token?.symbol ?? ""}`}
             {!isLoading && <ArrowRight className="ml-2 h-4 w-4" />}
           </Button>
         </Dialog.Content>

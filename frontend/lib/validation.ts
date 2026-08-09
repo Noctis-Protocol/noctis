@@ -28,6 +28,38 @@ export interface ValidationResult {
 }
 
 /**
+ * Validate an amount against explicit limits (V2 multi-token path).
+ * Limits come from the vault's on-chain tokenConfigs, already converted to
+ * human units; pass undefined when the config has not loaded yet.
+ */
+export function validateAmountWithLimits(
+  amount: string,
+  symbol: string,
+  min?: number,
+  max?: number
+): ValidationResult {
+  const numAmount = parseFloat(amount);
+
+  if (isNaN(numAmount) || numAmount <= 0) {
+    return { valid: false, error: 'Enter a valid amount' };
+  }
+  if (min !== undefined && numAmount < min) {
+    return { valid: false, error: `Minimum deposit: ${min} ${symbol}` };
+  }
+  if (max !== undefined && max > 0 && numAmount > max) {
+    return { valid: false, error: `Maximum deposit: ${max.toLocaleString()} ${symbol}` };
+  }
+  return { valid: true };
+}
+
+/** Suggested quick amounts per token symbol (fallback for unknown tokens). */
+export function quickAmountsFor(symbol: string): readonly number[] {
+  if (symbol === 'ETH' || symbol === 'WETH') return DEPOSIT_LIMITS.ETH.QUICK_AMOUNTS;
+  if (symbol === 'USDC' || symbol === 'USDT') return DEPOSIT_LIMITS.USDC.QUICK_AMOUNTS;
+  return [1, 10, 100, 1000];
+}
+
+/**
  * Validate deposit amount against contract limits
  * @param amount - Amount as string (user input)
  * @param token - Token type (ETH or USDT)

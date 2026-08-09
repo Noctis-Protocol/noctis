@@ -399,7 +399,7 @@ export function ActivityFeed() {
                       <>
                         <span
                           className="font-amount text-xs font-semibold text-ink-900"
-                          title="Effective fill price (USDC per ETH)"
+                          title="Effective fill price (USDC per base token)"
                         >
                           {activity.priceLabel}
                         </span>

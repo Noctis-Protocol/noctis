@@ -22,9 +22,18 @@ export {
   UniswapPairLiveProvider,
 } from "./useUniswapPairLive";
 export { useRelayer } from "./useRelayer";
+export { useBaseTokenMarket } from "./useBaseTokenMarket";
+export {
+  useTokenRegistry,
+  useTokenLimits,
+  formatTokenAmount,
+  parseTokenAmount,
+  displayDecimalsFor,
+} from "./useTokenRegistry";
 
 export type { Activity, ActivityType, ActivityStatus } from "./useActivityFeed";
 export type { WithdrawalStatus } from "./useWithdrawalStatus";
 export type { BalanceTransaction } from "./useBalanceTracker";
-export type { TokenType } from "./useBalanceDecryption";
+export type { DecryptedBalance } from "./useBalanceDecryption";
 export type { RevealedTrade } from "./useTradeHistoryDecryption";
+export type { TokenInfo } from "./useTokenRegistry";

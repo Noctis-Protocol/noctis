@@ -1,10 +1,11 @@
 "use client";
 
 /**
- * WithdrawModal Component
- * 
- * Modal for withdrawing ETH or USDC from the vault.
- * Withdrawal destination and amount are encrypted.
+ * WithdrawModal Component (V2 — multi-token)
+ *
+ * Request a withdrawal for any vault-registered token. V2 withdrawals are
+ * self-recipient (funds return to the requesting wallet); the amount is
+ * encrypted client-side when the FHE relayer is available.
  */
 
 import { useState } from "react";
@@ -12,22 +13,26 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { X, ArrowRight, Lock, CheckCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { TokenSelector } from "@/components/ui/TokenSelector";
 import { cn, isValidAmountInput } from "@/lib/utils";
 import { useNoctisVault } from "@/hooks/useNoctisVault";
+import { useTokenRegistry, useTokenLimits } from "@/hooks/useTokenRegistry";
+import type { TokenInfo } from "@/hooks/useTokenRegistry";
 
 interface WithdrawModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
-type WithdrawToken = "ETH" | "USDC";
-
 export function WithdrawModal({ open, onOpenChange }: WithdrawModalProps) {
-  const [token, setToken] = useState<WithdrawToken>("ETH");
+  const { supportedTokens, isLoading: registryLoading } = useTokenRegistry();
+  const [selected, setSelected] = useState<TokenInfo | null>(null);
   const [amount, setAmount] = useState("");
-  const [recipient, setRecipient] = useState("");
   const [requestId, setRequestId] = useState<bigint | null>(null);
   const [showSuccess, setShowSuccess] = useState(false);
+
+  const token = selected ?? supportedTokens[0] ?? null;
+  const limits = useTokenLimits(token);
 
   const { requestWithdrawal, isLoading, error } = useNoctisVault({
     onWithdrawalSuccess: () => {
@@ -36,24 +41,23 @@ export function WithdrawModal({ open, onOpenChange }: WithdrawModalProps) {
   });
 
   const handleWithdraw = async () => {
-    if (!amount || parseFloat(amount) <= 0 || !recipient) return;
-    
+    if (!token || !amount || parseFloat(amount) <= 0) return;
+
     // Reset previous success state
     setShowSuccess(false);
     setRequestId(null);
-    
-    // Call the withdrawal function
-    const newRequestId = await requestWithdrawal(recipient, amount, token === "ETH");
-    
+
+    // V2: withdrawal is self-recipient — only token + amount
+    const newRequestId = await requestWithdrawal(token, amount);
+
     if (newRequestId !== null) {
       // Success!
       setRequestId(newRequestId);
       setShowSuccess(true);
-      
+
       // Reset form after showing success message
       setTimeout(() => {
         setAmount("");
-        setRecipient("");
         setShowSuccess(false);
         onOpenChange(false);
       }, 3000);
@@ -66,7 +70,11 @@ export function WithdrawModal({ open, onOpenChange }: WithdrawModalProps) {
     }
   };
 
-  const isValidAddress = recipient.startsWith("0x") && recipient.length === 42;
+  const exceedsCap =
+    limits.maxWithdrawal !== undefined &&
+    limits.maxWithdrawal > 0 &&
+    Boolean(amount) &&
+    parseFloat(amount) > limits.maxWithdrawal;
 
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -91,35 +99,21 @@ export function WithdrawModal({ open, onOpenChange }: WithdrawModalProps) {
             </Dialog.Close>
           </div>
 
-          {/* Token selection */}
-          <div className="flex gap-2 mb-6">
-            {(["ETH", "USDC"] as WithdrawToken[]).map((t) => (
-              <Button
-                key={t}
-                variant={token === t ? "default" : "outline"}
-                className="flex-1"
-                onClick={() => setToken(t)}
-              >
-                {t}
-              </Button>
-            ))}
-          </div>
-
-          {/* Recipient input */}
-          <div className="space-y-2 mb-4">
-            <label className="text-sm font-medium">Recipient Address</label>
-            <Input
-              type="text"
-              placeholder="0x..."
-              value={recipient}
-              onChange={(e) => setRecipient(e.target.value)}
-              className={cn(
-                recipient && !isValidAddress && "border-red-500"
-              )}
+          {/* Token selection (dynamic registry) */}
+          <div className="mb-6">
+            <label className="text-xs text-muted-foreground mb-2 block">
+              Token
+            </label>
+            <TokenSelector
+              tokens={supportedTokens}
+              selected={token}
+              onSelect={(t) => {
+                setSelected(t);
+                setAmount("");
+              }}
+              disabled={registryLoading}
+              ariaLabel="Select withdrawal token"
             />
-            {recipient && !isValidAddress && (
-              <p className="text-xs text-red-500">Invalid address format</p>
-            )}
           </div>
 
           {/* Amount input */}
@@ -132,12 +126,17 @@ export function WithdrawModal({ open, onOpenChange }: WithdrawModalProps) {
                 placeholder="0.0"
                 value={amount}
                 onChange={handleAmountChange}
-                className="pr-16 text-lg"
+                className={cn("pr-16 text-lg", exceedsCap && "border-red-500")}
               />
               <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground">
-                {token}
+                {token?.symbol ?? ""}
               </span>
             </div>
+            {exceedsCap && token && (
+              <p className="text-xs text-red-500">
+                Exceeds the per-request cap ({limits.maxWithdrawal} {token.symbol})
+              </p>
+            )}
           </div>
 
           {/* Privacy info */}
@@ -146,7 +145,8 @@ export function WithdrawModal({ open, onOpenChange }: WithdrawModalProps) {
             <div>
               <p className="font-medium text-brand-900">Private Withdrawal</p>
               <p className="text-brand-600 mt-0.5">
-                Recipient address and amount will be encrypted. No one can see where your funds go.
+                The amount is encrypted client-side. Funds return to your wallet
+                after the two-step execute flow{token?.isNative ? " (ETH goes to Ready to claim)" : ""}.
               </p>
             </div>
           </div>
@@ -158,7 +158,7 @@ export function WithdrawModal({ open, onOpenChange }: WithdrawModalProps) {
               <div>
                 <p className="font-medium text-green-900">Withdrawal Request #{requestId.toString()} Submitted!</p>
                 <p className="text-green-600 mt-0.5">
-                  Go to your balance panel and click "Execute" to complete privately.
+                  Go to your balance panel and click &quot;Execute&quot; to complete privately.
                 </p>
               </div>
             </div>
@@ -180,11 +180,11 @@ export function WithdrawModal({ open, onOpenChange }: WithdrawModalProps) {
             variant="gradient"
             size="lg"
             className="w-full"
-            disabled={!amount || parseFloat(amount) <= 0 || !isValidAddress || isLoading}
+            disabled={!token || !amount || parseFloat(amount) <= 0 || exceedsCap || isLoading}
             loading={isLoading}
             onClick={handleWithdraw}
           >
-            {isLoading ? "Processing..." : `Withdraw ${token}`}
+            {isLoading ? "Processing..." : `Withdraw ${token?.symbol ?? ""}`}
             {!isLoading && <ArrowRight className="ml-2 h-4 w-4" />}
           </Button>
         </Dialog.Content>

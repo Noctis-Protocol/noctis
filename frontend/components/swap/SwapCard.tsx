@@ -1,45 +1,45 @@
 "use client";
 
 /**
- * SwapCard Component
- * 
+ * SwapCard Component (V2 — multi-token)
+ *
  * Central trading interface with USER-INITIATED SWAP:
- * - Create encrypted order
+ * - Pair selector: any tradable base token vs USDC
+ * - Create encrypted order (base units, per-token decimals)
  * - Request swap execution (mark for decryption)
  * - Decrypt privately via Gateway
  * - Execute with proof
- * 
+ *
  * PRIVACY-FIRST: No keeper involvement, user controls entire flow.
  */
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { useAccount, useChainId, usePublicClient } from "wagmi";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { ArrowDownUp, CheckCircle, Loader2, AlertTriangle, Copy, ChevronDown } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { TokenInput } from "./TokenInput";
 import { isFlashbotsConfigured, isFlashbotsUrl, getSavedRpcUrl, saveRpcUrl } from "./FlashbotsSetupModal";
+import { TokenSelector } from "@/components/ui/TokenSelector";
 import {
   useNoctisExchange,
   useVaultBalances,
   useSwapExecution,
-  useEthPrice,
   useBalanceDecryption,
+  useTokenRegistry,
+  useBaseTokenMarket,
+  parseTokenAmount,
 } from "@/hooks";
-import { cn, formatUsd, parseAmount, getPriceImpactColor } from "@/lib/utils";
+import type { TokenInfo } from "@/hooks";
+import { cn, formatUsd, getPriceImpactColor } from "@/lib/utils";
 import { buyPreflight } from "@/lib/buyPreflight";
 import { NoctisExchangeABI } from "@/lib/contracts/abi";
 import { useContractAddresses } from "@/lib/wagmi";
 
 // NoctisExchange caps slippage at 3% (MAX_MARKET_ORDER_SLIPPAGE_BPS = 300).
-// The Sepolia pilot pool is shallow (~4.4 ETH deep): a 0.1 ETH trade costs
-// ~2.5% (price impact + 0.3% Uniswap fee), so sub-1% tolerances can never
-// clear the oracle slippage floor and the swap reverts with
-// INSUFFICIENT_OUTPUT_AMOUNT.
+// The Sepolia pilot pools are shallow: sub-1% tolerances can never clear the
+// oracle slippage floor and the swap reverts with INSUFFICIENT_OUTPUT_AMOUNT.
 const SLIPPAGE_OPTIONS = [0.5, 1.0, 2.0, 3.0];
-
-// Must match NoctisExchange.minOrderSize (0.001 ether)
-const MIN_ORDER_ETH = 0.001;
 
 // Flashbots RPC URLs
 const FLASHBOTS_RPC = {
@@ -47,17 +47,13 @@ const FLASHBOTS_RPC = {
   sepolia: "https://rpc-sepolia.flashbots.net",
 };
 
-type Token = "ETH" | "USDC";
-
 /**
  * MEV Protection Check Component
  * Inline RPC verification with Flashbots info
  */
-function MevProtectionCheck({ 
-  isProtected, 
-  onRpcChecked 
-}: { 
-  isProtected: boolean; 
+function MevProtectionCheck({
+  onRpcChecked
+}: {
   onRpcChecked: (isFlashbots: boolean) => void;
 }) {
   const chainId = useChainId();
@@ -93,8 +89,8 @@ function MevProtectionCheck({
   return (
     <div className={cn(
       "p-3 rounded-xl border",
-      isUserProtected 
-        ? "bg-green-50 border-green-200" 
+      isUserProtected
+        ? "bg-green-50 border-green-200"
         : "bg-amber-50 border-amber-200"
     )}>
       {/* Header */}
@@ -191,11 +187,22 @@ function MevProtectionCheck({
 
 export function SwapCard() {
   const { isConnected, address } = useAccount();
-  const chainId = useChainId();
   const publicClient = usePublicClient();
   const contracts = useContractAddresses();
-  const { ethPrice, getOutputAmount } = useEthPrice();
-  const { createMarketOrder, isLoading: isCreatingOrder, isFheReady, relayerAvailable, hasVaultId } = useNoctisExchange();
+  const { tradableTokens, usdc } = useTokenRegistry();
+
+  // Pair selection: base token vs USDC
+  const [baseAddress, setBaseAddress] = useState<string | null>(null);
+  const baseToken: TokenInfo | null =
+    tradableTokens.find(
+      (t) => t.address.toLowerCase() === baseAddress?.toLowerCase()
+    ) ?? tradableTokens[0] ?? null;
+  const quoteSymbol = usdc?.symbol ?? "USDC";
+
+  const market = useBaseTokenMarket(baseToken);
+  const basePrice = market.price;
+
+  const { createMarketOrder, isLoading: isCreatingOrder, isFheReady, relayerAvailable } = useNoctisExchange();
   const {
     executeFullSwap,
     cancelSwapExecution,
@@ -213,29 +220,25 @@ export function SwapCard() {
     },
     onSwapError: () => setSwapStep("idle"),
   });
-  const { hasETHBalance, hasUSDTBalance } = useVaultBalances();
-  const { decrypted } = useBalanceDecryption();
+  const { hasBalance } = useVaultBalances();
+  const { balanceFor } = useBalanceDecryption();
 
-  // Swap state
-  const [inputToken, setInputToken] = useState<Token>("ETH");
-  const [outputToken, setOutputToken] = useState<Token>("USDC");
+  // Swap state — isSell: pay base receive USDC; !isSell (BUY): pay USDC receive base
+  const [isSell, setIsSell] = useState(true);
   const [inputAmount, setInputAmount] = useState("");
-  // 2% default: required for ~0.1 ETH orders on the shallow pilot pool (see
+  // 2% default: required for typical sizes on the shallow pilot pools (see
   // SLIPPAGE_OPTIONS note). Users trading smaller sizes can lower it.
   const [slippage, setSlippage] = useState(2.0);
   const [showSettings, setShowSettings] = useState(false);
   const [swapStep, setSwapStep] = useState<"idle" | "creating" | "executing" | "complete">("idle");
   const [lastOrderId, setLastOrderId] = useState<bigint | null>(null);
   const [pendingOrderIds, setPendingOrderIds] = useState<bigint[]>([]);
-  const [flashbotsEnabled, setFlashbotsEnabled] = useState(false);
+  const [, setFlashbotsEnabled] = useState(false);
   const [showMev, setShowMev] = useState(false);
   const [buyBlockReason, setBuyBlockReason] = useState<string | null>(null);
   const [buyWarning, setBuyWarning] = useState<string | null>(null);
   const [isCancelling, setIsCancelling] = useState(false);
   const [cancellingId, setCancellingId] = useState<bigint | null>(null);
-  
-  // Check if on mainnet (where MEV is a real concern)
-  const isMainnet = chainId === 1;
 
   // Load Flashbots status on mount
   useEffect(() => {
@@ -246,66 +249,34 @@ export function SwapCard() {
   const handleRpcChecked = useCallback((isFlashbots: boolean) => {
     setFlashbotsEnabled(isFlashbots);
   }, []);
-  
+
   // Real output from Uniswap
   const [realOutput, setRealOutput] = useState<{ output: number; priceImpact: number } | null>(null);
-  
-  // Estimated gas cost for FHE operations
-  // Realistic estimate: ~800K-1.2M gas (not the 3.5M safety limit)
-  const ESTIMATED_GAS_FHE = 1_000_000n; // ~1M gas realistic estimate
-  const [estimatedGasCost, setEstimatedGasCost] = useState<string>("--");
-  const [networkGasPrice, setNetworkGasPrice] = useState<string>("--");
-  
-  // Gas estimate from network gasPrice × Uniswap mid (no CoinGecko)
-  useEffect(() => {
-    async function fetchGasCost() {
-      if (!publicClient) return;
 
-      try {
-        const gasPrice = await publicClient.getGasPrice();
-        const gasPriceGwei = Number(gasPrice) / 1e9;
-        setNetworkGasPrice(`${gasPriceGwei.toFixed(1)} gwei`);
-
-        const costInEth = Number(ESTIMATED_GAS_FHE * gasPrice) / 1e18;
-        const costInUsd = costInEth * ethPrice;
-
-        if (costInUsd < 0.01) {
-          setEstimatedGasCost("<$0.01");
-        } else {
-          setEstimatedGasCost(`~$${costInUsd.toFixed(2)}`);
-        }
-      } catch (error) {
-        console.error("Failed to fetch gas price:", error);
-        setEstimatedGasCost("~$2-5");
-      }
-    }
-
-    void fetchGasCost();
-    const interval = setInterval(fetchGasCost, 30_000);
-    return () => clearInterval(interval);
-  }, [publicClient, ethPrice]);
   const [isLoadingQuote, setIsLoadingQuote] = useState(false);
-  const [quoteAge, setQuoteAge] = useState(0); // Seconds since last quote
-  
   const QUOTE_REFRESH_INTERVAL = 10; // Refresh every 10 seconds (like 1inch)
-  
+
+  // Minimum order size (base units → human)
+  const minOrderBase = useMemo(() => {
+    if (!baseToken || market.minOrderSize <= 0n) return 0;
+    return Number(market.minOrderSize) / 10 ** baseToken.decimals;
+  }, [baseToken, market.minOrderSize]);
+
   // Use ref to avoid re-creating intervals when fetchQuote changes
   const fetchQuoteRef = useRef<() => Promise<void>>(async () => {});
-  
+
   // Keep ref updated with latest fetchQuote function
   fetchQuoteRef.current = async () => {
     const inputValue = parseFloat(inputAmount) || 0;
-    if (inputValue <= 0 || !getOutputAmount) {
+    if (inputValue <= 0 || !baseToken) {
       setRealOutput(null);
       return;
     }
-    
+
     setIsLoadingQuote(true);
     try {
-      const isSellEth = inputToken === "ETH";
-      const result = await getOutputAmount(inputValue, isSellEth);
+      const result = await market.getOutputAmount(inputValue, isSell);
       setRealOutput(result);
-      setQuoteAge(0); // Reset age on new quote
     } catch (e) {
       console.error("Quote fetch error:", e);
       setRealOutput(null);
@@ -319,37 +290,38 @@ export function SwapCard() {
     const inputValue = parseFloat(inputAmount) || 0;
     if (inputValue <= 0) {
       setRealOutput(null);
-      setQuoteAge(0);
       setBuyBlockReason(null);
       setBuyWarning(null);
       return;
     }
-    
+
     const timeout = setTimeout(() => {
       fetchQuoteRef.current?.();
     }, 300);
     return () => clearTimeout(timeout);
-  }, [inputAmount, inputToken]);
+  }, [inputAmount, isSell, baseToken?.address]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // BUY: size/warn from Uniswap; hard-block only on quote failure
   useEffect(() => {
-    if (inputToken !== "USDC" || !publicClient) {
+    if (isSell || !publicClient || !market.preflightBase) {
       setBuyBlockReason(null);
       setBuyWarning(null);
       return;
     }
-    const usdc = parseFloat(inputAmount) || 0;
-    if (usdc <= 0) {
+    const usdcAmount = parseFloat(inputAmount) || 0;
+    if (usdcAmount <= 0) {
       setBuyBlockReason(null);
       setBuyWarning(null);
       return;
     }
+    const preflightBase = market.preflightBase;
     let cancelled = false;
     const t = setTimeout(async () => {
       const result = await buyPreflight(
         publicClient,
-        usdc,
-        Math.round(slippage * 100)
+        usdcAmount,
+        Math.round(slippage * 100),
+        preflightBase
       );
       if (cancelled) return;
       if (!result.ok) {
@@ -364,27 +336,19 @@ export function SwapCard() {
       cancelled = true;
       clearTimeout(t);
     };
-  }, [inputAmount, inputToken, slippage, publicClient]);
+  }, [inputAmount, isSell, slippage, publicClient, market.preflightBase]);
 
-  // Countdown timer only (separate from fetch logic)
+  // Quote refresh timer
   useEffect(() => {
     const inputValue = parseFloat(inputAmount) || 0;
     if (inputValue <= 0) return;
 
     const interval = setInterval(() => {
-      setQuoteAge((prev) => {
-        const next = prev + 1;
-        if (next >= QUOTE_REFRESH_INTERVAL) {
-          // Trigger refresh
-          fetchQuoteRef.current?.();
-          return 0;
-        }
-        return next;
-      });
-    }, 1000);
+      fetchQuoteRef.current?.();
+    }, QUOTE_REFRESH_INTERVAL * 1000);
 
     return () => clearInterval(interval);
-  }, [inputAmount]); // Only restart when inputAmount changes
+  }, [inputAmount]);
 
   // Refetch on window focus
   useEffect(() => {
@@ -398,36 +362,33 @@ export function SwapCard() {
     return () => window.removeEventListener("focus", handleFocus);
   }, [inputAmount]);
 
-  // Derived values — direction-aware (SELL: ETH→USDC, BUY: USDC→ETH)
-  const isSell = inputToken === "ETH";
+  // Derived values — direction-aware (SELL: base→USDC, BUY: USDC→base)
   const inputValue = parseFloat(inputAmount) || 0;
   const outputAmount = realOutput
     ? isSell
       ? realOutput.output.toFixed(2)
       : realOutput.output.toFixed(6)
-    : inputAmount && ethPrice > 0
+    : inputAmount && basePrice > 0
       ? isSell
-        ? (inputValue * ethPrice).toFixed(2)
-        : (inputValue / ethPrice).toFixed(6)
+        ? (inputValue * basePrice).toFixed(2)
+        : (inputValue / basePrice).toFixed(6)
       : "";
   const inputUsd = inputAmount
     ? isSell
-      ? inputValue * ethPrice
+      ? inputValue * basePrice
       : inputValue
     : 0;
   const outputUsd = outputAmount
     ? isSell
       ? parseFloat(outputAmount)
-      : parseFloat(outputAmount) * ethPrice
+      : parseFloat(outputAmount) * basePrice
     : 0;
   const priceImpact = realOutput?.priceImpact ?? 0;
 
-  const payBalance = isSell
-    ? decrypted.eth?.formatted
-    : decrypted.usdt?.formatted;
-  const receiveBalance = isSell
-    ? decrypted.usdt?.formatted
-    : decrypted.eth?.formatted;
+  const baseVaultBalance = balanceFor(baseToken?.address)?.formatted;
+  const usdcVaultBalance = balanceFor(usdc?.address)?.formatted;
+  const payBalance = isSell ? baseVaultBalance : usdcVaultBalance;
+  const receiveBalance = isSell ? usdcVaultBalance : baseVaultBalance;
 
   // Discover stuck PendingSwap orders for this wallet (survives refresh)
   const refreshPendingOrders = useCallback(async () => {
@@ -483,67 +444,73 @@ export function SwapCard() {
     return () => clearInterval(t);
   }, [isConnected, refreshPendingOrders]);
 
-  // Swap direction — keep notional when possible (convert via quote or ethPrice)
+  // Swap direction — keep notional when possible (convert via quote or oracle)
   const handleSwapDirection = useCallback(() => {
     const amt = parseFloat(inputAmount);
     let nextAmount = "";
-    if (amt > 0 && ethPrice > 0) {
-      if (inputToken === "ETH") {
-        // SELL → BUY: pay USDC ≈ previous receive (or ETH * price)
-        const usdc = realOutput?.output ?? amt * ethPrice;
-        nextAmount = usdc.toFixed(2);
+    if (amt > 0 && basePrice > 0) {
+      if (isSell) {
+        // SELL → BUY: pay USDC ≈ previous receive (or base * price)
+        const usdcAmt = realOutput?.output ?? amt * basePrice;
+        nextAmount = usdcAmt.toFixed(2);
       } else {
-        // BUY → SELL: pay ETH ≈ previous receive (or USDC / price)
-        const eth = realOutput?.output ?? amt / ethPrice;
-        nextAmount = eth.toFixed(6);
+        // BUY → SELL: pay base ≈ previous receive (or USDC / price)
+        const baseAmt = realOutput?.output ?? amt / basePrice;
+        nextAmount = baseAmt.toFixed(6);
       }
     }
-    setInputToken(outputToken);
-    setOutputToken(inputToken);
+    setIsSell((v) => !v);
     setInputAmount(nextAmount);
     setRealOutput(null);
     setSwapStep("idle");
-  }, [ethPrice, inputAmount, inputToken, outputToken, realOutput]);
+  }, [basePrice, inputAmount, isSell, realOutput]);
+
+  const handleSelectBase = useCallback((token: TokenInfo) => {
+    setBaseAddress(token.address);
+    setInputAmount("");
+    setRealOutput(null);
+    setBuyBlockReason(null);
+    setBuyWarning(null);
+    setSwapStep("idle");
+  }, []);
 
   // Execute full swap: create order → request → decrypt → execute
   const handleSwap = useCallback(async () => {
-    if (!inputAmount || parseFloat(inputAmount) <= 0) return;
+    if (!inputAmount || parseFloat(inputAmount) <= 0 || !baseToken) return;
 
     try {
       // Step 1: Create encrypted order
       setSwapStep("creating");
-      const isBuy = inputToken === "USDC"; // Buying ETH with USDC
+      const isBuy = !isSell; // Buying base with USDC
 
-      let amountETH: bigint;
-      let amountUSDT: bigint;
+      let amountBase: bigint;
 
       if (isBuy) {
-        if (!publicClient) {
+        if (!publicClient || !market.preflightBase) {
           setSwapStep("idle");
           return;
         }
         const pre = await buyPreflight(
           publicClient,
           parseFloat(inputAmount),
-          Math.round(slippage * 100)
+          Math.round(slippage * 100),
+          market.preflightBase
         );
         if (!pre.ok) {
           setBuyBlockReason(pre.reason);
           setSwapStep("idle");
           return;
         }
-        // Pool-sized ETH leg (honest receive). Still blocked above when oracle
-        // floor cannot be met for the oracle-priced USDC debit.
-        amountETH = pre.amountETH;
-        amountUSDT = parseAmount(inputAmount, 6);
+        // Oracle-sized base leg (honest receive). Still blocked above when the
+        // oracle floor cannot be met for the oracle-priced USDC debit.
+        amountBase = pre.amountBase;
       } else {
-        amountETH = parseAmount(inputAmount, 18);
-        amountUSDT = parseAmount(outputAmount || "0", 6);
+        amountBase = parseTokenAmount(inputAmount, baseToken.decimals);
       }
 
       const orderId = await createMarketOrder({
-        amountETH,
-        amountUSDT,
+        baseToken: baseToken.address,
+        amountBase,
         isBuy,
         slippageBPS: Math.round(slippage * 100),
         maxDeviationBPS: 150,
@@ -561,8 +528,8 @@ export function SwapCard() {
       const slipBps = BigInt(Math.round(slippage * 100));
       let outputValue: bigint;
       if (isBuy) {
-        const ethOut = realOutput?.output ?? parseFloat(outputAmount || "0");
-        outputValue = BigInt(Math.floor(ethOut * 1e18));
+        const baseOut = realOutput?.output ?? parseFloat(outputAmount || "0");
+        outputValue = parseTokenAmount(baseOut.toFixed(baseToken.decimals), baseToken.decimals);
       } else {
         outputValue = BigInt(
           Math.floor(parseFloat(outputAmount || "0") * 1e6)
@@ -573,24 +540,26 @@ export function SwapCard() {
           ? (outputValue * (10000n - slipBps)) / 10000n
           : 0n;
 
-      const success = await executeFullSwap(orderId, minAmountOut, isBuy, 3000);
-      
+      const success = await executeFullSwap(orderId, minAmountOut, isBuy);
+
       if (!success) {
         setSwapStep("idle");
       }
       // On success, the callback will set swapStep to "complete"
-      
+
     } catch (err) {
       console.error("Swap failed:", err);
       setSwapStep("idle");
     }
   }, [
     inputAmount,
-    inputToken,
+    isSell,
+    baseToken,
     outputAmount,
     realOutput,
     slippage,
     publicClient,
+    market.preflightBase,
     createMarketOrder,
     executeFullSwap,
   ]);
@@ -619,31 +588,36 @@ export function SwapCard() {
   // Loading state
   const isLoading = isCreatingOrder || isSwapping || swapStep === "creating" || swapStep === "executing";
 
+  const baseSymbol = baseToken?.symbol ?? "…";
+
   // Button state
   const getButtonConfig = () => {
     if (!isConnected) {
       return { text: "Connect Wallet", disabled: false, showConnect: true };
     }
+    if (!baseToken) {
+      return { text: "Loading pairs…", disabled: true };
+    }
     if (!inputAmount || parseFloat(inputAmount) <= 0) {
       return {
-        text: isSell ? "Enter ETH to sell" : "Enter USDC to spend",
+        text: isSell ? `Enter ${baseSymbol} to sell` : `Enter ${quoteSymbol} to spend`,
         disabled: true,
       };
     }
-    // Contract minOrderSize applies to the order's amountETH (oracle-sized),
-    // NOT the Uniswap receive quote (thin Sepolia pools can quote << 0.001 ETH).
-    const ethLeg = isSell
+    // Contract minOrderSize applies to the order's amountBase (oracle-sized),
+    // NOT the Uniswap receive quote (thin Sepolia pools can quote below it).
+    const baseLeg = isSell
       ? parseFloat(inputAmount)
-      : ethPrice > 0
-        ? parseFloat(inputAmount) / ethPrice
+      : basePrice > 0
+        ? parseFloat(inputAmount) / basePrice
         : 0;
-    if (ethLeg > 0 && ethLeg < MIN_ORDER_ETH) {
+    if (minOrderBase > 0 && baseLeg > 0 && baseLeg < minOrderBase) {
       if (isSell) {
-        return { text: `Minimum order: ${MIN_ORDER_ETH} ETH`, disabled: true };
+        return { text: `Minimum order: ${minOrderBase} ${baseSymbol}`, disabled: true };
       }
-      const minUsdc = (MIN_ORDER_ETH * ethPrice).toFixed(2);
+      const minUsdc = (minOrderBase * basePrice).toFixed(2);
       return {
-        text: `Minimum ~${minUsdc} USDC (≥ ${MIN_ORDER_ETH} ETH)`,
+        text: `Minimum ~${minUsdc} ${quoteSymbol} (≥ ${minOrderBase} ${baseSymbol})`,
         disabled: true,
       };
     }
@@ -674,7 +648,9 @@ export function SwapCard() {
       return { text: "Processing...", disabled: true, loading: true };
     }
     return {
-      text: isSell ? "Sell ETH for USDC" : "Buy ETH with USDC",
+      text: isSell
+        ? `Sell ${baseSymbol} for ${quoteSymbol}`
+        : `Buy ${baseSymbol} with ${quoteSymbol}`,
       disabled: false,
     };
   };
@@ -689,28 +665,33 @@ export function SwapCard() {
   const tradeSummary =
     inputAmount && parseFloat(inputAmount) > 0
       ? isSell
-        ? `Sell ${inputAmount} ETH → ~${outputAmount || "…"} USDC`
-        : `Spend ${inputAmount} USDC → ~${outputAmount || "…"} ETH`
+        ? `Sell ${inputAmount} ${baseSymbol} → ~${outputAmount || "…"} ${quoteSymbol}`
+        : `Spend ${inputAmount} ${quoteSymbol} → ~${outputAmount || "…"} ${baseSymbol}`
       : null;
 
+  const hasBaseBalance = hasBalance(baseToken?.address);
+  const hasUsdcBalance = hasBalance(usdc?.address);
   const vaultPay = payBalance
     ? payBalance
-    : isSell
-      ? hasETHBalance
-        ? "••••"
-        : "0"
-      : hasUSDTBalance
-        ? "••••"
-        : "0";
+    : (isSell ? hasBaseBalance : hasUsdcBalance)
+      ? "••••"
+      : "0";
   const vaultRecv = receiveBalance
     ? receiveBalance
-    : isSell
-      ? hasUSDTBalance
-        ? "••••"
-        : "0"
-      : hasETHBalance
-        ? "••••"
-        : "0";
+    : (isSell ? hasUsdcBalance : hasBaseBalance)
+      ? "••••"
+      : "0";
+
+  // Inline base-token selector (used in whichever leg is the base side)
+  const baseSelector = (
+    <TokenSelector
+      tokens={tradableTokens}
+      selected={baseToken}
+      onSelect={handleSelectBase}
+      variant="inline"
+      ariaLabel="Select base token"
+    />
+  );
 
   return (
     <div className="mx-auto w-full max-w-md">
@@ -722,11 +703,11 @@ export function SwapCard() {
           <h2 className="font-display mt-2 text-[clamp(2rem,5vw,2.6rem)] font-bold leading-[0.92] tracking-[-0.045em] text-ink-900">
             {isSell ? (
               <>
-                Sell <span className="text-brand-700">ETH</span>
+                Sell <span className="text-brand-700">{baseSymbol}</span>
               </>
             ) : (
               <>
-                Buy <span className="text-brand-700">ETH</span>
+                Buy <span className="text-brand-700">{baseSymbol}</span>
               </>
             )}
           </h2>
@@ -740,31 +721,38 @@ export function SwapCard() {
         </button>
       </div>
 
-      <div className="mb-8 flex gap-8 border-b border-ink-200/80">
-        <button
-          type="button"
-          onClick={() => setDirection(true)}
-          className={cn(
-            "font-display -mb-px pb-3 text-lg font-bold tracking-[-0.03em] transition-colors",
-            isSell
-              ? "border-b-2 border-ink-900 text-ink-900"
-              : "text-ink-300 hover:text-ink-600"
-          )}
-        >
-          Sell
-        </button>
-        <button
-          type="button"
-          onClick={() => setDirection(false)}
-          className={cn(
-            "font-display -mb-px pb-3 text-lg font-bold tracking-[-0.03em] transition-colors",
-            !isSell
-              ? "border-b-2 border-ink-900 text-ink-900"
-              : "text-ink-300 hover:text-ink-600"
-          )}
-        >
-          Buy
-        </button>
+      <div className="mb-8 flex items-end justify-between gap-4 border-b border-ink-200/80">
+        <div className="flex gap-8">
+          <button
+            type="button"
+            onClick={() => setDirection(true)}
+            className={cn(
+              "font-display -mb-px pb-3 text-lg font-bold tracking-[-0.03em] transition-colors",
+              isSell
+                ? "border-b-2 border-ink-900 text-ink-900"
+                : "text-ink-300 hover:text-ink-600"
+            )}
+          >
+            Sell
+          </button>
+          <button
+            type="button"
+            onClick={() => setDirection(false)}
+            className={cn(
+              "font-display -mb-px pb-3 text-lg font-bold tracking-[-0.03em] transition-colors",
+              !isSell
+                ? "border-b-2 border-ink-900 text-ink-900"
+                : "text-ink-300 hover:text-ink-600"
+            )}
+          >
+            Buy
+          </button>
+        </div>
+        {/* Pair selector */}
+        <div className="mb-2 flex items-center gap-1.5">
+          {baseSelector}
+          <span className="font-sans text-xs text-ink-400">/ {quoteSymbol}</span>
+        </div>
       </div>
 
       <AnimatePresence>
@@ -802,7 +790,7 @@ export function SwapCard() {
       <div>
         <TokenInput
           label="From vault"
-          token={inputToken}
+          symbol={isSell ? baseSymbol : quoteSymbol}
           amount={inputAmount}
           usdValue={inputUsd}
           balance={vaultPay}
@@ -828,7 +816,7 @@ export function SwapCard() {
 
         <TokenInput
           label="You receive"
-          token={outputToken}
+          symbol={isSell ? quoteSymbol : baseSymbol}
           amount={outputAmount}
           usdValue={outputUsd}
           balance={vaultRecv}
@@ -840,10 +828,10 @@ export function SwapCard() {
 
       <div className="mt-8 flex flex-wrap items-baseline justify-between gap-2 border-t border-ink-200/70 pt-5">
         <p className="font-display text-base font-bold tracking-[-0.03em] text-ink-900">
-          {tradeSummary ?? (isSell ? "ETH → USDC" : "USDC → ETH")}
+          {tradeSummary ?? (isSell ? `${baseSymbol} → ${quoteSymbol}` : `${quoteSymbol} → ${baseSymbol}`)}
         </p>
         <p className="font-amount text-sm font-semibold text-ink-500">
-          1 ETH = {formatUsd(ethPrice)}
+          1 {baseSymbol} = {formatUsd(basePrice)}
           {inputAmount && parseFloat(inputAmount) > 0 && (
             <span className={cn("ml-2 font-sans text-xs font-medium", getPriceImpactColor(priceImpact))}>
               · {isLoadingQuote ? "…" : `${priceImpact.toFixed(2)}%`}
@@ -876,7 +864,7 @@ export function SwapCard() {
           {pendingOrderIds.length > 0 && (
             <>
               <p className="font-sans text-xs font-semibold text-amber-900">
-                Stuck pending swap{pendingOrderIds.length > 1 ? "s" : ""} — cancel to unlock USDC
+                Stuck pending swap{pendingOrderIds.length > 1 ? "s" : ""} — cancel to unlock {quoteSymbol}
               </p>
               {pendingOrderIds.map((id) => (
                 <button
@@ -924,10 +912,7 @@ export function SwapCard() {
             exit={{ height: 0, opacity: 0 }}
             className="mt-3 overflow-hidden"
           >
-            <MevProtectionCheck
-              isProtected={flashbotsEnabled}
-              onRpcChecked={handleRpcChecked}
-            />
+            <MevProtectionCheck onRpcChecked={handleRpcChecked} />
           </motion.div>
         )}
       </AnimatePresence>

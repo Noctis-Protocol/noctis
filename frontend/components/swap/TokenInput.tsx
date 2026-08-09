@@ -2,14 +2,19 @@
 
 /**
  * Open amount field — no nested grey cards; JetBrains Mono amounts (tabular).
+ * V2: token-agnostic — takes a symbol and an optional selector slot so the
+ * trade screen can swap the base token in place.
  */
 
-import { ChangeEvent } from "react";
+import { ChangeEvent, ReactNode } from "react";
 import { cn, formatUsd, isValidAmountInput } from "@/lib/utils";
+import { TokenLogo } from "@/components/ui/TokenSelector";
 
 interface TokenInputProps {
   label: string;
-  token: "ETH" | "USDC";
+  symbol: string;
+  /** Secondary line under the symbol (defaults to nothing) */
+  tokenName?: string;
   amount: string;
   usdValue?: number;
   balance?: string;
@@ -18,24 +23,14 @@ interface TokenInputProps {
   onChange?: (value: string) => void;
   className?: string;
   emphasis?: "pay" | "receive";
+  /** Replaces the static symbol block (e.g. a TokenSelector) */
+  selectorSlot?: ReactNode;
 }
-
-const TOKEN_META = {
-  ETH: {
-    symbol: "ETH",
-    name: "Ether",
-    logo: "https://upload.wikimedia.org/wikipedia/commons/0/05/Ethereum_logo_2014.svg",
-  },
-  USDC: {
-    symbol: "USDC",
-    name: "USD Coin",
-    logo: "https://upload.wikimedia.org/wikipedia/commons/4/4a/Circle_USDC_Logo.svg",
-  },
-} as const;
 
 export function TokenInput({
   label,
-  token,
+  symbol,
+  tokenName,
   amount,
   usdValue = 0,
   balance,
@@ -44,9 +39,8 @@ export function TokenInput({
   onChange,
   className,
   emphasis = "pay",
+  selectorSlot,
 }: TokenInputProps) {
-  const meta = TOKEN_META[token];
-
   const handleChange = (e: ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     if (isValidAmountInput(value)) onChange?.(value);
@@ -64,7 +58,7 @@ export function TokenInput({
             <span className="font-amount font-semibold text-ink-600">
               {balance}
             </span>{" "}
-            {meta.symbol}
+            {symbol}
           </span>
         )}
       </div>
@@ -99,7 +93,7 @@ export function TokenInput({
                   ? "text-[2.5rem] sm:text-[2.75rem]"
                   : "text-[2rem] sm:text-[2.25rem] text-ink-800"
               )}
-              aria-label={`${label} ${meta.symbol} amount`}
+              aria-label={`${label} ${symbol} amount`}
             />
           )}
           <p className="mt-2 min-h-[1.25rem] font-sans text-sm text-ink-400">
@@ -108,13 +102,17 @@ export function TokenInput({
         </div>
 
         <div className="mb-1 flex shrink-0 flex-col items-end gap-1">
-          <div className="flex items-center gap-2">
-            <img src={meta.logo} alt="" className="h-5 w-5 opacity-90" />
-            <span className="font-display text-2xl font-bold tracking-[-0.04em] text-ink-900">
-              {meta.symbol}
-            </span>
-          </div>
-          <span className="font-sans text-[0.7rem] text-ink-400">{meta.name}</span>
+          {selectorSlot ?? (
+            <div className="flex items-center gap-2">
+              <TokenLogo symbol={symbol} className="h-5 w-5 opacity-90" />
+              <span className="font-display text-2xl font-bold tracking-[-0.04em] text-ink-900">
+                {symbol}
+              </span>
+            </div>
+          )}
+          {tokenName && (
+            <span className="font-sans text-[0.7rem] text-ink-400">{tokenName}</span>
+          )}
         </div>
       </div>
     </div>

@@ -15,19 +15,20 @@ import { NoctisVaultABI } from '../lib/contracts/abi';
 
 const RELAYER_URL = env.relayerUrl;
 
-// EIP-712 Domain (must match contract and relayer)
+// EIP-712 Domain (must match NoctisExchangeV2 and the keeper relayer)
 const EIP712_DOMAIN = {
   name: 'NoctisExchange' as const,
-  version: '1' as const,
+  version: '2' as const,
   chainId: 11155111,
   verifyingContract: env.exchangeAddress as `0x${string}`,
 } as const;
 
-// EIP-712 Types
+// EIP-712 Types (V2: per-token orders — baseToken + amountBase in base units)
 const CREATE_ORDER_TYPES = {
   CreateOrder: [
     { name: 'vaultId', type: 'uint256' },
-    { name: 'amountETH', type: 'uint128' },
+    { name: 'baseToken', type: 'address' },
+    { name: 'amountBase', type: 'uint128' },
     { name: 'isBuy', type: 'bool' },
     { name: 'slippageToleranceBPS', type: 'uint16' },
     { name: 'maxPriceDeviationBPS', type: 'uint16' },
@@ -45,12 +46,12 @@ const SWAP_REQUEST_TYPES = {
   ],
 } as const;
 
+// V2: poolFee removed (routing is resolved per-token by the contract)
 const SWAP_EXECUTION_TYPES = {
   SwapExecution: [
     { name: 'orderId', type: 'uint256' },
     { name: 'amount', type: 'uint128' },
     { name: 'minAmountOut', type: 'uint256' },
-    { name: 'poolFee', type: 'uint24' },
     { name: 'deadline', type: 'uint256' },
     { name: 'nonce', type: 'uint256' },
   ],
@@ -138,7 +139,8 @@ export function useRelayer() {
    * User signs EIP-712 message with vaultId, relayer submits on-chain
    */
   const signAndCreateOrder = useCallback(async (params: {
-    amountETH: bigint;
+    baseToken: `0x${string}`;
+    amountBase: bigint;
     isBuy: boolean;
     slippageBPS: number;
     maxDeviationBPS: number;
@@ -160,7 +162,8 @@ export function useRelayer() {
       primaryType: 'CreateOrder',
       message: {
         vaultId: BigInt(vaultId as bigint),
-        amountETH: params.amountETH,
+        baseToken: params.baseToken,
+        amountBase: params.amountBase,
         isBuy: params.isBuy,
         slippageToleranceBPS: params.slippageBPS,
         maxPriceDeviationBPS: params.maxDeviationBPS,
@@ -176,7 +179,8 @@ export function useRelayer() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         vaultId: (vaultId as bigint).toString(),
-        amountETH: params.amountETH.toString(),
+        baseToken: params.baseToken,
+        amountBase: params.amountBase.toString(),
         isBuy: params.isBuy,
         slippageBPS: params.slippageBPS,
         maxDeviationBPS: params.maxDeviationBPS,
@@ -245,14 +249,13 @@ export function useRelayer() {
     orderId: bigint;
     amount: bigint;
     minAmountOut: bigint;
-    poolFee: number;
     cleartexts: string;
     decryptionProof: string;
   }): Promise<{
     txHash: string;
     buySufficiencyHandle?: string;
     sufficiencyHandle?: string;
-    usdtNeeded?: string;
+    usdcNeeded?: string;
   }> => {
     if (!vaultId) throw new Error('No vaultId found');
     if (!relayerStatus.available) throw new Error('Relayer is not available');
@@ -268,7 +271,6 @@ export function useRelayer() {
         orderId: params.orderId,
         amount: params.amount,
         minAmountOut: params.minAmountOut,
-        poolFee: params.poolFee,
         deadline,
         nonce,
       },
@@ -281,7 +283,6 @@ export function useRelayer() {
         orderId: params.orderId.toString(),
         amount: params.amount.toString(),
         minAmountOut: params.minAmountOut.toString(),
-        poolFee: params.poolFee,
         cleartexts: params.cleartexts,
         decryptionProof: params.decryptionProof,
         vaultId: (vaultId as bigint).toString(),

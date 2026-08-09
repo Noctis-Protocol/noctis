@@ -172,10 +172,9 @@ export function encodeSwapCallbackData(
   orderId: bigint,
   cleartexts: `0x${string}`,
   proof: `0x${string}`,
-  minAmountOut: bigint,
-  poolFee: number
+  minAmountOut: bigint
 ): `0x${string}` {
-  // ABI for executeSwapCallback
+  // ABI for executeSwapCallback (V2: routing is per-token, no poolFee)
   const abi = [{
     name: "executeSwapCallback",
     type: "function",
@@ -185,7 +184,6 @@ export function encodeSwapCallbackData(
       { name: "cleartexts", type: "bytes" },
       { name: "decryptionProof", type: "bytes" },
       { name: "minAmountOut", type: "uint256" },
-      { name: "poolFee", type: "uint24" },
     ],
     outputs: [],
   }] as const;
@@ -193,7 +191,7 @@ export function encodeSwapCallbackData(
   return encodeFunctionData({
     abi,
     functionName: "executeSwapCallback",
-    args: [orderId, cleartexts, proof, minAmountOut, poolFee],
+    args: [orderId, cleartexts, proof, minAmountOut],
   });
 }
 

@@ -1,10 +1,10 @@
 /**
- * useActivityFeed Hook
+ * useActivityFeed Hook (V2 — multi-token)
  *
  * Merges:
  * 1. The Graph subgraph (deposits / withdrawals) when NEXT_PUBLIC_SUBGRAPH_URL is set
- * 2. On-chain deposits (ETHDeposited / USDTDeposited logs)
- * 3. On-chain withdrawals (withdrawalRequests scan)
+ * 2. On-chain deposits (Deposited(token, user) logs)
+ * 3. On-chain withdrawals (withdrawal requests scan)
  * 4. On-chain orders via getMyOrder (subgraph orders are anonymous — no trader field)
  *
  * Subgraph often lags, 404s, or stays on an old vault after redeploy —
@@ -19,9 +19,10 @@ import { useQuery } from "@apollo/client/react";
 import { formatEther, formatUnits, parseAbiItem } from "viem";
 import { GET_USER_ACTIVITY } from "@/lib/graphql/queries";
 import { useContractAddresses } from "@/lib/wagmi";
-import { NoctisExchangeABI, NoctisVaultABI } from "@/lib/contracts/abi";
+import { NoctisExchangeABI, NoctisVaultABI, NATIVE_TOKEN } from "@/lib/contracts/abi";
+import { useTokenRegistry } from "./useTokenRegistry";
 
-/** Vault deploy block on Sepolia (from deployments / subgraph.yaml). */
+/** Lower bound for V2 log scans on Sepolia (V1 deploy block — V2 is later). */
 const VAULT_START_BLOCK = 11445821n;
 
 /** OrderStatus: Pending=0, PendingSwap=1, Filled=2, Cancelled=3 */
@@ -29,11 +30,9 @@ const ORDER_STATUS_FILLED = 2;
 const ORDER_STATUS_CANCELLED = 3;
 const ORDER_STATUS_PENDING_SWAP = 1;
 
-const ETH_DEPOSITED_EVENT = parseAbiItem(
-  "event ETHDeposited(address indexed user)"
-);
-const USDT_DEPOSITED_EVENT = parseAbiItem(
-  "event USDTDeposited(address indexed user)"
+/** V2: one event for all tokens; user is NOT indexed (filter client-side). */
+const DEPOSITED_EVENT = parseAbiItem(
+  "event Deposited(address indexed token, address user)"
 );
 const ERC20_TRANSFER_EVENT = parseAbiItem(
   "event Transfer(address indexed from, address indexed to, uint256 value)"
@@ -143,35 +142,6 @@ function parseWithdrawal(withdrawal: any): Activity {
   };
 }
 
-function parseOrder(order: any): Activity {
-  const direction = order.isBuy ? "Buy ETH" : "Sell ETH";
-
-  let status: ActivityStatus = "pending";
-  let description = `${direction} Order`;
-
-  if (order.status === "FILLED") {
-    status = "success";
-    description = `${direction} Filled`;
-  } else if (order.status === "CANCELLED") {
-    status = "failed";
-    description = `${direction} Cancelled`;
-  }
-
-  const orderId = String(order.orderId ?? order.id);
-  return {
-    id: order.id,
-    type: "order",
-    status,
-    description,
-    timestamp: new Date(Number(order.filledAt || order.createdAt) * 1000),
-    amount: "🔒",
-    token: "Private",
-    txHash: order.filledTxHash || order.createdTxHash,
-    orderId,
-    isBuy: Boolean(order.isBuy),
-  };
-}
-
 function normalizeWithdrawalId(id: string): string {
   if (id.startsWith("withdrawal-")) return id;
   return `withdrawal-${id}`;
@@ -179,62 +149,51 @@ function normalizeWithdrawalId(id: string): string {
 
 /**
  * Scan vault deposit events for this user when The Graph is down / empty.
+ * V2: single Deposited(token, user) event — user is not indexed, filter here.
  */
 async function fetchOnChainDeposits(
   publicClient: NonNullable<ReturnType<typeof usePublicClient>>,
   vaultAddress: `0x${string}`,
   userAddress: `0x${string}`,
-  usdtAddress?: `0x${string}`
+  symbolFor: (address: string | undefined | null) => string,
+  decimalsFor: (address: string | undefined | null) => number
 ): Promise<Activity[]> {
   const latest = await publicClient.getBlockNumber();
   const fromBlock =
     latest > VAULT_START_BLOCK ? VAULT_START_BLOCK : 0n;
 
-  const [ethLogs, usdtLogs] = await Promise.all([
-    publicClient.getLogs({
-      address: vaultAddress,
-      event: ETH_DEPOSITED_EVENT,
-      args: { user: userAddress },
-      fromBlock,
-      toBlock: latest,
-    }),
-    publicClient.getLogs({
-      address: vaultAddress,
-      event: USDT_DEPOSITED_EVENT,
-      args: { user: userAddress },
-      fromBlock,
-      toBlock: latest,
-    }),
-  ]);
+  const logs = await publicClient.getLogs({
+    address: vaultAddress,
+    event: DEPOSITED_EVENT,
+    fromBlock,
+    toBlock: latest,
+  });
+
+  const user = userAddress.toLowerCase();
+  const userLogs = logs.filter(
+    (log) => String(log.args.user ?? "").toLowerCase() === user
+  );
 
   const activities: Activity[] = [];
 
-  for (const log of ethLogs) {
-    const [tx, block] = await Promise.all([
-      publicClient.getTransaction({ hash: log.transactionHash }),
-      publicClient.getBlock({ blockNumber: log.blockNumber }),
-    ]);
-    const amount = formatEther(tx.value);
-    activities.push({
-      id: `deposit-eth-${log.transactionHash}-${log.logIndex}`,
-      type: "deposit",
-      status: "success",
-      description: "Deposit ETH",
-      timestamp: new Date(Number(block.timestamp) * 1000),
-      amount,
-      token: "ETH",
-      txHash: log.transactionHash,
-      blockNumber: log.blockNumber,
-    });
-  }
-
-  for (const log of usdtLogs) {
+  for (const log of userLogs) {
+    const tokenAddress = String(log.args.token ?? NATIVE_TOKEN).toLowerCase();
+    const isNative = tokenAddress === NATIVE_TOKEN;
+    const symbol = symbolFor(tokenAddress);
     const block = await publicClient.getBlock({ blockNumber: log.blockNumber });
+
     let amount: string | undefined;
-    if (usdtAddress) {
+    if (isNative) {
+      try {
+        const tx = await publicClient.getTransaction({ hash: log.transactionHash });
+        amount = formatEther(tx.value);
+      } catch {
+        // Privacy-safe fallback: show deposit without amount
+      }
+    } else {
       try {
         const transfers = await publicClient.getLogs({
-          address: usdtAddress,
+          address: tokenAddress as `0x${string}`,
           event: ERC20_TRANSFER_EVENT,
           args: { from: userAddress, to: vaultAddress },
           fromBlock: log.blockNumber,
@@ -244,20 +203,21 @@ async function fetchOnChainDeposits(
           (t) => t.transactionHash === log.transactionHash
         );
         if (match?.args?.value != null) {
-          amount = formatUnits(match.args.value as bigint, 6);
+          amount = formatUnits(match.args.value as bigint, decimalsFor(tokenAddress));
         }
       } catch {
         // Privacy-safe fallback: show deposit without amount
       }
     }
+
     activities.push({
-      id: `deposit-usdc-${log.transactionHash}-${log.logIndex}`,
+      id: `deposit-${symbol.toLowerCase()}-${log.transactionHash}-${log.logIndex}`,
       type: "deposit",
       status: "success",
-      description: "Deposit USDC",
+      description: `Deposit ${symbol}`,
       timestamp: new Date(Number(block.timestamp) * 1000),
       amount: amount ?? "🔒",
-      token: "USDC",
+      token: symbol,
       txHash: log.transactionHash,
       blockNumber: log.blockNumber,
     });
@@ -274,7 +234,9 @@ async function fetchOnChainDeposits(
 async function fetchOnChainWithdrawals(
   publicClient: NonNullable<ReturnType<typeof usePublicClient>>,
   vaultAddress: `0x${string}`,
-  userAddress: `0x${string}`
+  userAddress: `0x${string}`,
+  symbolFor: (address: string | undefined | null) => string,
+  decimalsFor: (address: string | undefined | null) => number
 ): Promise<Activity[]> {
   const counter = (await publicClient.readContract({
     address: vaultAddress,
@@ -317,24 +279,32 @@ async function fetchOnChainWithdrawals(
   const user = userAddress.toLowerCase();
 
   for (let id = maxScan; id >= 1; id--) {
+    // V2: getWithdrawalRequest returns the WithdrawalRequest struct (named fields)
     const request = (await publicClient.readContract({
       address: vaultAddress,
       abi: NoctisVaultABI,
-      functionName: "withdrawalRequests",
+      functionName: "getWithdrawalRequest",
       args: [BigInt(id)],
-    })) as any;
+    })) as {
+      requestId: bigint;
+      requester: string;
+      token: string;
+      requestTime: bigint;
+      executed: boolean;
+      decryptionRequested: boolean;
+    };
 
-    const requestId = BigInt(request.requestId ?? request[0] ?? 0);
+    const requestId = BigInt(request.requestId ?? 0);
     if (requestId === 0n) continue;
 
-    const requester = String(request.requester ?? request[1] ?? "").toLowerCase();
+    const requester = String(request.requester ?? "").toLowerCase();
     if (requester !== user) continue;
 
-    const executed = Boolean(request.executed ?? request[9]);
-    const gatewayRequested = Boolean(request.gatewayRequested ?? request[11]);
-    const isEth = Boolean(request.isEth ?? request[7]);
-    const requestTime = Number(request.requestTime ?? request[8] ?? 0);
-    const token = isEth ? "ETH" : "USDC";
+    const executed = Boolean(request.executed);
+    const gatewayRequested = Boolean(request.decryptionRequested);
+    const tokenAddress = String(request.token ?? NATIVE_TOKEN).toLowerCase();
+    const requestTime = Number(request.requestTime ?? 0);
+    const token = symbolFor(tokenAddress);
 
     let status: ActivityStatus = "pending";
     let description = "Withdrawal Processing";
@@ -346,7 +316,7 @@ async function fetchOnChainWithdrawals(
       description = "Withdrawal Completed";
       const clear = executedAmountById.get(String(id));
       if (clear != null) {
-        amount = isEth ? formatEther(clear) : formatUnits(clear, 6);
+        amount = formatUnits(clear, decimalsFor(tokenAddress));
       }
     } else if (gatewayRequested) {
       status = "confirming";
@@ -374,7 +344,8 @@ async function fetchOnChainWithdrawals(
 async function fetchOnChainOrders(
   publicClient: NonNullable<ReturnType<typeof usePublicClient>>,
   exchangeAddress: `0x${string}`,
-  userAddress: `0x${string}`
+  userAddress: `0x${string}`,
+  symbolFor: (address: string | undefined | null) => string
 ): Promise<Activity[]> {
   const counter = (await publicClient.readContract({
     address: exchangeAddress,
@@ -411,7 +382,9 @@ async function fetchOnChainOrders(
     const isBuy = Boolean(order.isBuy);
     const statusRaw = Number(order.status ?? 0);
     const ts = Number(order.timestamp ?? 0);
-    const direction = isBuy ? "Buy ETH" : "Sell ETH";
+    // V2: orders carry their base token — show the pair's base symbol
+    const baseSymbol = symbolFor(String(order.baseToken ?? "")) || "?";
+    const direction = isBuy ? `Buy ${baseSymbol}` : `Sell ${baseSymbol}`;
 
     let status: ActivityStatus = "pending";
     let description = `${direction} Order`;
@@ -446,6 +419,7 @@ export function useActivityFeed(): UseActivityFeedReturn {
   const { address, isConnected } = useAccount();
   const publicClient = usePublicClient();
   const contracts = useContractAddresses();
+  const { symbolFor, decimalsFor } = useTokenRegistry();
 
   const subgraphConfigured =
     typeof window !== "undefined" && !!process.env.NEXT_PUBLIC_SUBGRAPH_URL;
@@ -485,14 +459,13 @@ export function useActivityFeed(): UseActivityFeedReturn {
         try {
           const vault = contracts.vaultAddress as `0x${string}`;
           const user = address as `0x${string}`;
-          const usdt = contracts.usdtAddress as `0x${string}` | undefined;
           const exchange = contracts.exchangeAddress as `0x${string}` | undefined;
           const tasks: Promise<Activity[]>[] = [
-            fetchOnChainDeposits(publicClient, vault, user, usdt),
-            fetchOnChainWithdrawals(publicClient, vault, user),
+            fetchOnChainDeposits(publicClient, vault, user, symbolFor, decimalsFor),
+            fetchOnChainWithdrawals(publicClient, vault, user, symbolFor, decimalsFor),
           ];
           if (exchange) {
-            tasks.push(fetchOnChainOrders(publicClient, exchange, user));
+            tasks.push(fetchOnChainOrders(publicClient, exchange, user, symbolFor));
           }
           const results = await Promise.all(tasks);
           onChainDeposits = results[0];
@@ -561,11 +534,12 @@ export function useActivityFeed(): UseActivityFeedReturn {
     },
     [
       address,
-      contracts?.usdtAddress,
       contracts?.vaultAddress,
       contracts?.exchangeAddress,
       isConnected,
       publicClient,
+      symbolFor,
+      decimalsFor,
     ]
   );
 
