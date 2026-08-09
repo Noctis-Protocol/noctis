@@ -14,6 +14,8 @@
     "security:slither:full": "slither . --exclude-dependencies --print human-summary",
     "deploy:local": "hardhat run scripts/deploy.ts --network localhost",
     "deploy:sepolia": "hardhat run scripts/deployExchange.ts --network sepolia",
+    "deploy:v2:sepolia": "hardhat run scripts/deployV2.ts --network sepolia",
+    "deploy:v2:mainnet": "hardhat run scripts/deployV2.ts --network mainnet",
     "deploy:zama": "hardhat run scripts/deployExchange.ts --network zamaDevnet",
     "deploy:arbitrum": "hardhat run scripts/deployExchange.ts --network arbitrumSepolia",
     "deploy:mainnet": "hardhat run scripts/deployExchange.ts --network mainnet",
