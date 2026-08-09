@@ -1,0 +1,17 @@
+{
+  "network": "sepolia",
+  "chainId": 11155111,
+  "updatedAt": "2026-08-09",
+  "contracts": {
+    "NoctisVaultV2": "0xe65b394c8A4347D92bc665C60c6263Eb115d21A7",
+    "NoctisExchangeV2": "0xCa06f9981407D0469DA5f9ffE78A6684DECD7d56",
+    "USDC": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
+    "UniswapV2Router": "0xC532a74256D3Db42D0Bf7a0400fEFDbad7694008",
+    "EthUsdPriceFeed": "0x694AA1769357215DE4FAC081bf1f309aDC325306",
+    "SequencerUptimeFeed": "0x0000000000000000000000000000000000000000",
+    "feeRecipient": "0x24448B8c366b754E7B0a3F0D46cBCa62BD7beAb7",
+    "gasRecipient": "0xB63063402eD60d4630bc575dEC5458CDB94d16D6",
+    "feeBps": 5
+  },
+  "notes": "V2 SSOT (multi-token). Live V1 SSOT stays canonical until cutover. gasRecipient = relayer float wallet: gas refunds are paid there at settlement (no Safe round-trip)."
+}
