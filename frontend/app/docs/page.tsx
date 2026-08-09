@@ -352,9 +352,10 @@ export default function DocsPage() {
                   exchange contract, a single relayer, and this desk UI. Vault
                   balances are stored as FHE ciphertexts
                   (<code className="rounded bg-ink-100 px-1.5 py-0.5 font-mono text-[0.85em] text-ink-800">euint128</code>),
-                  swap intents are encrypted client-side, and settlement runs
-                  through Uniswap with the exchange contract as the pool
-                  counterparty. The first pair is ETH/USDT (USDC on Sepolia).
+                  orders are relayer-submitted so the trader address never
+                  appears on-chain, and settlement runs through Uniswap with
+                  the exchange contract as the pool counterparty. Pairs are
+                  registered base tokens traded against USDC.
                 </p>
                 <p className="mt-4 max-w-[65ch] leading-relaxed text-ink-600">
                   Noctis is not a mixer, not an internal order-book matcher,
@@ -379,7 +380,9 @@ export default function DocsPage() {
                         <td className="px-5 py-3.5">Uniswap fill size</td>
                       </tr>
                       <tr>
-                        <td className="px-5 py-3.5">Pre-trade swap intent (amount ciphertext)</td>
+                        <td className="px-5 py-3.5">
+                          On-chain order size (FHE ciphertext, unlinkable to the trader)
+                        </td>
                         <td className="px-5 py-3.5">Pool sees the Exchange address</td>
                       </tr>
                       <tr>
@@ -404,11 +407,23 @@ export default function DocsPage() {
                   fill after inclusion.
                 </p>
                 <p className="mt-3 max-w-[65ch] text-sm leading-relaxed text-ink-500">
-                  The desk market panel shows an ETH/USDC Uniswap V2 pool chart and
-                  Uniswap V2 <em>pool depth</em> (AMM{" "}
+                  <strong className="font-semibold text-ink-700">The relayer
+                  is trusted with order size.</strong> On the gasless path the
+                  signed order carries the amount and direction in cleartext,
+                  so the relayer sees who trades how much before submitting —
+                  the size becomes public at the Uniswap fill anyway; what the
+                  relayer additionally learns is the identity link. It never
+                  has custody, cannot alter the signed parameters, and cannot
+                  decrypt vault balances. Self-relaying removes this party at
+                  the cost of gas and <span className="font-mono text-xs">tx.from</span>{" "}
+                  exposure.
+                </p>
+                <p className="mt-3 max-w-[65ch] text-sm leading-relaxed text-ink-500">
+                  The desk market panel shows the selected pair&apos;s Uniswap V2
+                  pool chart and <em>pool depth</em> (AMM{" "}
                   <span className="font-mono text-xs">getAmountsOut</span> ladder)
-                  — not a central-limit order book. Your encrypted intents never
-                  appear on that ladder.
+                  — not a central-limit order book. Your orders never appear on
+                  that ladder.
                 </p>
               </section>
 
@@ -436,11 +451,11 @@ export default function DocsPage() {
                 </p>
                 <ol className="mt-6 max-w-[65ch] space-y-4">
                   {[
-                    "The user signs an encrypted intent (EIP-712), including a gas refund amount quoted by the relayer.",
+                    "The user signs the order parameters (EIP-712), including a gas refund amount quoted by the relayer. The relayer sees the size; on-chain it is stored as an FHE ciphertext, unlinkable to the trader.",
                     "The relayer verifies the signature off-chain and creates the order on the exchange contract.",
                     "The exchange requests decryption of the amount, and of balance sufficiency on sells, through the Zama Gateway.",
                     "With the decryption proof verified on-chain, the exchange swaps on Uniswap as a proxy.",
-                    `At settlement, the ${PILOT.feeLabel} fee and the gas refund are skimmed from the output to the Safe treasury.`,
+                    `At settlement, the ${PILOT.feeLabel} fee goes to the Safe treasury and the gas refund goes to the relayer wallet, both skimmed from the output.`,
                     "The net output is credited back to the user's encrypted vault balance.",
                   ].map((step, i) => (
                     <li key={step} className="flex gap-4 text-sm leading-relaxed text-ink-600">
@@ -530,20 +545,10 @@ export default function DocsPage() {
                   claim this is trustless. Defense in depth compensates:
                   deposit and withdrawal caps, on-chain balance checks,
                   emergency pause, suspicious-value events, and a timelock on
-                  admin surfaces. The single relayer can observe intent
-                  metadata and can censor or delay, but cannot decrypt user
-                  balances and cannot move funds outside the signed paths.
-                </p>
-                <p className="mt-4 max-w-[65ch] text-sm leading-relaxed text-ink-500">
-                  Auditor handoff (threat map, residual risks, review focus):{" "}
-                  <code className="font-mono text-[0.8rem] text-ink-700">
-                    noctis-protocol/docs/B6_AUDITOR_THREAT_MODEL.md
-                  </code>
-                  . Partner desk steps:{" "}
-                  <code className="font-mono text-[0.8rem] text-ink-700">
-                    noctis-protocol/docs/C3_DESK_RUNBOOK.md
-                  </code>
-                  .
+                  admin surfaces. The single relayer sees the full order it
+                  relays (trader, size, direction) and can censor or delay,
+                  but cannot decrypt vault balances, cannot alter signed
+                  parameters, and cannot move funds outside the signed paths.
                 </p>
                 <p className="mt-3 max-w-[65ch] text-sm leading-relaxed text-ink-500">
                   Privacy hygiene (not mixer tech): avoid size-matching a deposit

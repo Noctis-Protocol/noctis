@@ -1,17 +1,35 @@
 # Noctis
 
-**Private Uniswap desk** — encrypted vault balances and swap intents ([ZAMA](https://www.zama.ai/) FHE), settlement against Uniswap V2, **0.05%** protocol fee.
+**Private Uniswap desk** — encrypted vault balances and unlinkable, relayer-submitted orders ([ZAMA](https://www.zama.ai/) FHE), settlement against Uniswap V2, **0.05%** protocol fee.
 
 > Live pilot: **Ethereum Sepolia**. Soft mainnet is prepared but not required to run the testnet desk.
 
 ## Features
 
-- Deposit ETH / USDC → **encrypted** vault balances  
-- Private market intents → relayer + FHE proofs → Uniswap fill  
+- Deposit ETH / USDC / listed tokens → **encrypted** vault balances  
+- Gasless market orders → relayer + FHE proofs → Uniswap fill  
 - Withdraw via pull pattern  
 - Desk UI: live pool mid/depth, private “Reveal trades”, activity feed  
 
-**Honest privacy boundary:** vault balances and intents stay encrypted; the Uniswap fill size is public at settlement.
+## Privacy model (honest boundary)
+
+What stays private, from whom:
+
+- **Vault balances — encrypted end-to-end.** Holdings live as FHE ciphertexts;
+  the decryption ACL is granted to the owner only. Nobody — relayer included —
+  can read a position or reconstruct balances before/after a trade.
+- **Public unlinkability.** Relayed orders are submitted by the relayer:
+  `tx.from` is the relayer, and the trader address appears in no event, no
+  public getter, no order struct. On-chain observers see *that* a swap of size
+  X happened, not *who* traded.
+- **Trusted relayer for order size.** On the gasless relayed path the signed
+  intent carries the amount and direction in cleartext, so the relayer sees
+  *who trades how much* before submitting (the size becomes public anyway at
+  Uniswap settlement — the relayer just learns it seconds earlier, plus the
+  identity link). The relayer never has custody and cannot alter the order
+  (EIP-712-signed parameters). Self-relayed orders remove this third party at
+  the cost of gas + `tx.from` exposure.
+- **Fill size is public at settlement** — inherent to settling on Uniswap.
 
 ## Monorepo
 

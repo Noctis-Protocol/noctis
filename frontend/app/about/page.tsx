@@ -7,7 +7,7 @@ import { PILOT } from "@/lib/pilot";
 export const metadata: Metadata = {
   title: "About | Noctis",
   description:
-    "Private Uniswap desk on Zama FHE: encrypted vault balances and swap intents, settled against Uniswap V2. Live Sepolia pilot. Protocol fee 0.05%.",
+    "Private Uniswap desk on Zama FHE: encrypted vault balances and unlinkable orders, settled against Uniswap V2. Live Sepolia pilot. Protocol fee 0.05%.",
 };
 
 const steps = [
@@ -58,7 +58,7 @@ export default function AboutPage() {
               Trade Uniswap without showing your size.
             </h1>
             <p className="mt-5 max-w-xl text-lg leading-relaxed text-ink-500">
-              Encrypted balances and swap intents on the Zama Protocol, settled
+              Encrypted balances and unlinkable orders on the Zama Protocol, settled
               against Uniswap liquidity. Protocol fee {PILOT.feeLabel}. Live
               pilot on {PILOT.network}.
             </p>
@@ -206,8 +206,8 @@ export default function AboutPage() {
             </h2>
             <p className="mt-4 max-w-xl leading-relaxed text-ink-500">
               Confidential RFQ is a confidential swap venue. Noctis is a desk
-              on top of Uniswap depth: encrypted vault accounting and intents,
-              same Zama FHE stack, different job.
+              on top of Uniswap depth: encrypted vault accounting and
+              unlinkable order flow, same Zama FHE stack, different job.
             </p>
             <div className="mt-8 overflow-hidden rounded-2xl border border-border/80 bg-white/60">
               <table className="w-full text-left text-sm">
@@ -255,8 +255,8 @@ export default function AboutPage() {
             </h2>
             <p className="mt-4 max-w-xl leading-relaxed text-ink-500">
               Mempool tools and ZK shields solve adjacent problems. Noctis owns
-              one square: FHE-encrypted balances and intents, settled on
-              Uniswap.
+              one square: FHE-encrypted balances and unlinkable orders,
+              settled on Uniswap.
             </p>
             <div className="mt-8 overflow-hidden rounded-2xl border border-border/80 bg-white/60">
               <table className="w-full text-left text-sm">

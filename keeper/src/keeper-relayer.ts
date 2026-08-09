@@ -543,7 +543,9 @@ class KeeperRelayerService {
 
         if (!consumeNonceOrReject(vaultId, nonce, res)) return;
 
-        console.log(`[RELAY] createOrder: vaultId=${vaultId}, baseToken=${baseToken}, amountBase=${amountBase}, isBuy=${isBuy}, gasRefundWei=${refundWei}`);
+        // PRIVACY: never log amount/direction next to the vault identity —
+        // logs persist on disk; the pairing is not public information.
+        console.log(`[RELAY] createOrder: vaultId=${vaultId}, baseToken=${baseToken}, gasRefundWei=${refundWei}`);
 
         // Submit transaction (relayer is tx.from, NOT the user)
         const tx = await this.exchange.createMarketOrderViaRelayer(
@@ -661,7 +663,8 @@ class KeeperRelayerService {
 
         if (!consumeNonceOrReject(vaultId, nonce, res)) return;
 
-        console.log(`[RELAY] executeSwap: orderId=${orderId}, amount=${amount}`);
+        // PRIVACY: amount deliberately not logged (see createOrder note)
+        console.log(`[RELAY] executeSwap: orderId=${orderId}`);
 
         const tx = await this.exchange.executeSwapViaRelayer(
           orderId,

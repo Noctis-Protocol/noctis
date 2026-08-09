@@ -26,7 +26,7 @@ const jetbrains = JetBrains_Mono({
 export const metadata: Metadata = {
   title: "Noctis | Private Uniswap desk",
   description:
-    "Encrypted vault balances and private swap intents — settled through Uniswap as a proxy.",
+    "Encrypted vault balances and unlinkable orders — settled through Uniswap as a proxy.",
   keywords: ["DeFi", "privacy", "FHE", "Uniswap", "desk", "ZAMA"],
   openGraph: {
     title: "Noctis",
