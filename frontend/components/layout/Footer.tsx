@@ -20,6 +20,9 @@ export function Footer() {
           <a href="/docs" className="transition-colors hover:text-ink-800">
             Docs
           </a>
+          <a href="/metrics" className="transition-colors hover:text-ink-800">
+            Metrics
+          </a>
           <a
             href="https://github.com/Noctis-Protocol/noctis"
             className="transition-colors hover:text-ink-800"
