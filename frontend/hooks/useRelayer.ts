@@ -12,6 +12,7 @@ import { useCallback, useState, useEffect } from 'react';
 import { useAccount, useReadContract, useSignTypedData } from 'wagmi';
 import { env } from '../lib/env';
 import { NoctisVaultABI } from '../lib/contracts/abi';
+import { encryptAmountForRelayer, prewarmFheEncryption } from '../lib/fheEncryptClient';
 
 const RELAYER_URL = env.relayerUrl;
 
@@ -23,12 +24,13 @@ const EIP712_DOMAIN = {
   verifyingContract: env.exchangeAddress as `0x${string}`,
 } as const;
 
-// EIP-712 Types (V2: per-token orders — baseToken + amountBase in base units)
+// EIP-712 Types (V2 E2E privacy: the amount travels as an FHE handle —
+// encrypted in the browser, opaque to the relayer and to public calldata)
 const CREATE_ORDER_TYPES = {
   CreateOrder: [
     { name: 'vaultId', type: 'uint256' },
     { name: 'baseToken', type: 'address' },
-    { name: 'amountBase', type: 'uint128' },
+    { name: 'encryptedAmount', type: 'bytes32' },
     { name: 'isBuy', type: 'bool' },
     { name: 'slippageToleranceBPS', type: 'uint16' },
     { name: 'maxPriceDeviationBPS', type: 'uint16' },
@@ -130,6 +132,8 @@ export function useRelayer() {
       }
     }
     checkHealth();
+    // Preload the FHE WASM + keys so the first order isn't slowed down
+    prewarmFheEncryption();
     const interval = setInterval(checkHealth, 30000); // Check every 30s
     return () => clearInterval(interval);
   }, []);
@@ -148,6 +152,7 @@ export function useRelayer() {
   }): Promise<{ orderId: string; txHash: string }> => {
     if (!vaultId) throw new Error('No vaultId found. Please deposit first.');
     if (!relayerStatus.available) throw new Error('Relayer is not available');
+    if (!relayerStatus.relayer) throw new Error('Relayer address unknown');
 
     const deadline = getDeadline();
     const nonce = orderNonce;
@@ -155,7 +160,15 @@ export function useRelayer() {
     // Gas-in-kind refund: quote from relayer unless caller pinned a value
     const gasRefundWei = params.gasRefundWei ?? (await fetchGasRefundQuote());
 
-    // Sign EIP-712 message (wallet popup - no gas cost!)
+    // E2E PRIVACY: encrypt the amount in the browser. The proof is bound to
+    // (exchange, relayer) because the relayer is msg.sender on-chain.
+    const { encryptedAmount, inputProof } = await encryptAmountForRelayer(
+      env.exchangeAddress,
+      relayerStatus.relayer,
+      params.amountBase
+    );
+
+    // Sign EIP-712 message over the FHE handle (wallet popup - no gas cost!)
     const signature = await signTypedDataAsync({
       domain: EIP712_DOMAIN,
       types: CREATE_ORDER_TYPES,
@@ -163,7 +176,7 @@ export function useRelayer() {
       message: {
         vaultId: BigInt(vaultId as bigint),
         baseToken: params.baseToken,
-        amountBase: params.amountBase,
+        encryptedAmount,
         isBuy: params.isBuy,
         slippageToleranceBPS: params.slippageBPS,
         maxPriceDeviationBPS: params.maxDeviationBPS,
@@ -173,14 +186,15 @@ export function useRelayer() {
       },
     });
 
-    // Send to relayer
+    // Send to relayer — the plaintext amount is NOT in this request
     const res = await fetch(`${RELAYER_URL}/api/relay/createOrder`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         vaultId: (vaultId as bigint).toString(),
         baseToken: params.baseToken,
-        amountBase: params.amountBase.toString(),
+        encryptedAmount,
+        inputProof,
         isBuy: params.isBuy,
         slippageBPS: params.slippageBPS,
         maxDeviationBPS: params.maxDeviationBPS,

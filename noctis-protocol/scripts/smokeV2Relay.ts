@@ -2,8 +2,9 @@ import { ethers } from "hardhat";
 
 /**
  * V2 E2E smoke test through the relayer HTTP API (production path):
- *   deposit ETH -> relayed SELL order (EIP-712 v2) -> requestSwap ->
- *   ZAMA publicDecrypt -> executeSwap -> verify fill + fee/gas-refund split.
+ *   deposit ETH -> E2E-ENCRYPTED relayed SELL order (client-side FHE input,
+ *   the relayer never sees the amount) -> requestSwap -> ZAMA publicDecrypt ->
+ *   executeSwap -> verify fill + fee/gas-refund split.
  */
 
 const RELAY = "http://127.0.0.1:3001";
@@ -45,10 +46,23 @@ async function main() {
   const vaultId: bigint = await vault.getMyVaultId();
   console.log("vaultId:", vaultId.toString());
 
-  // 2. Gas quote
+  // 2. Gas quote + relayer address (the FHE input proof must bind to it)
   const quote = await (await fetch(`${RELAY}/api/relay/gasQuote`)).json();
   const gasRefundWei = BigInt(quote.gasRefundWei);
   console.log("gasQuote:", quote);
+  const health = await (await fetch(`${RELAY}/api/relay/health`)).json();
+  const relayerAddress: string = health.relayer;
+  if (!relayerAddress) throw new Error("relayer address missing from /health");
+
+  // ZAMA relayer SDK instance (used for input encryption AND public decrypt)
+  const sdk: any = await import("@zama-fhe/relayer-sdk/node");
+  const cfg = sdk.SepoliaConfigV2 || sdk.SepoliaConfig;
+  const instance = await sdk.createInstance({
+    ...cfg,
+    network: process.env.SEPOLIA_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com",
+  });
+  const toHex = (b: Uint8Array) =>
+    "0x" + Array.from(b, (x: number) => x.toString(16).padStart(2, "0")).join("");
 
   // 3. EIP-712 v2
   const domain = {
@@ -61,7 +75,7 @@ async function main() {
     CreateOrder: [
       { name: "vaultId", type: "uint256" },
       { name: "baseToken", type: "address" },
-      { name: "amountBase", type: "uint128" },
+      { name: "encryptedAmount", type: "bytes32" },
       { name: "isBuy", type: "bool" },
       { name: "slippageToleranceBPS", type: "uint16" },
       { name: "maxPriceDeviationBPS", type: "uint16" },
@@ -85,12 +99,20 @@ async function main() {
   const deadline = () => Math.floor(Date.now() / 1000) + 600;
   let nonceSeq = Date.now();
 
-  // 4. Relayed SELL order (native ETH -> USDC)
+  // 4. Relayed SELL order (native ETH -> USDC), E2E-encrypted amount:
+  //    the plaintext never appears in the HTTP body nor in calldata.
   const amountBase = ethers.parseEther(SELL_ETH);
+  const encInput = instance.createEncryptedInput(c.NoctisExchangeV2, relayerAddress);
+  encInput.add128(amountBase);
+  const encrypted = await encInput.encrypt();
+  const encryptedAmount = toHex(encrypted.handles[0]);
+  const inputProof = toHex(encrypted.inputProof);
+  console.log("encrypted amount handle:", encryptedAmount);
+
   const createMsg = {
     vaultId,
     baseToken: ethers.ZeroAddress,
-    amountBase,
+    encryptedAmount,
     isBuy: false,
     slippageToleranceBPS: 100,
     maxPriceDeviationBPS: 200,
@@ -102,7 +124,8 @@ async function main() {
   const created = await post("createOrder", {
     vaultId: vaultId.toString(),
     baseToken: ethers.ZeroAddress,
-    amountBase: amountBase.toString(),
+    encryptedAmount,
+    inputProof,
     isBuy: false,
     slippageBPS: 100,
     maxDeviationBPS: 200,
@@ -128,12 +151,6 @@ async function main() {
   if (!requested.handles?.length) throw new Error("no decryption handles returned");
 
   // 6. Public decrypt via ZAMA relayer SDK
-  const sdk: any = await import("@zama-fhe/relayer-sdk/node");
-  const cfg = sdk.SepoliaConfigV2 || sdk.SepoliaConfig;
-  const instance = await sdk.createInstance({
-    ...cfg,
-    network: process.env.SEPOLIA_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com",
-  });
   const decrypted = await instance.publicDecrypt(requested.handles);
   const cleartexts = decrypted.abiEncodedClearValues;
   const proof = decrypted.decryptionProof;

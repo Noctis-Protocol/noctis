@@ -1,6 +1,10 @@
-# Roadmap — End-to-End Encrypted Intents (Year 1)
+# Roadmap — End-to-End Encrypted Intents
 
-**Status:** Planned (Year 1, not MVP)
+**Status:** Phase A SHIPPED (MVP, 2026-08-09) — `createEncryptedOrderViaRelayer`
+(browser-side FHE input encryption, bounds enforced at settlement) and
+pseudo-random vaultIds are live on Sepolia. Sections below kept for the
+phase B / Year 2 tracks (one-time order keys, signature-based cancel,
+withdrawal batching, stealth-address settlement, encrypted direction).
 **Scope:** contracts (`NoctisExchangeV2`, `NoctisVaultV2`), keeper, frontend, subgraph
 **Goal:** shrink the trust window on order size from *relayer + anyone parsing calldata* down to *settlement only* (where the size becomes public at the Uniswap fill anyway).
 

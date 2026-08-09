@@ -232,10 +232,13 @@ const EIP712_DOMAIN = {
 };
 
 const EIP712_TYPES = {
+  // E2E PRIVACY: the order size travels as an FHE handle (encryptedAmount) —
+  // the relayer never sees the plaintext. The handle commits to the ciphertext
+  // bundle, so signing it binds the order to one specific encrypted amount.
   CreateOrder: [
     { name: 'vaultId', type: 'uint256' },
     { name: 'baseToken', type: 'address' },
-    { name: 'amountBase', type: 'uint128' },
+    { name: 'encryptedAmount', type: 'bytes32' },
     { name: 'isBuy', type: 'bool' },
     { name: 'slippageToleranceBPS', type: 'uint16' },
     { name: 'maxPriceDeviationBPS', type: 'uint16' },
@@ -299,7 +302,7 @@ const EXCHANGE_ABI = [
 
   // Relayer functions (PRIVACY: user address NOT in calldata)
   // BUY: executeSwapViaRelayer only prepares sufficiency — user must call finalizeBuySwap
-  'function createMarketOrderViaRelayer(uint256 vaultId, address baseToken, uint128 amountBase, bool isBuy, uint16 slippageToleranceBPS, uint16 maxPriceDeviationBPS, uint128 gasRefundWei) external returns (uint256)',
+  'function createEncryptedOrderViaRelayer(uint256 vaultId, address baseToken, bytes32 encryptedAmount, bytes inputProof, bool isBuy, uint16 slippageToleranceBPS, uint16 maxPriceDeviationBPS, uint128 gasRefundWei) external returns (uint256)',
   'function maxGasRefundWei() view returns (uint128)',
   'event GasRefundCollected(uint256 indexed orderId, address indexed token, uint256 refundAmount)',
   'function requestSwapExecutionViaRelayer(uint256 orderId) external',
@@ -488,16 +491,27 @@ class KeeperRelayerService {
     // Create order via relayer (V2: multi-token — baseToken/USDC pair)
     this.app.post('/api/relay/createOrder', async (req, res) => {
       try {
-        const { vaultId, baseToken, amountBase, isBuy, slippageBPS, maxDeviationBPS, gasRefundWei, deadline, nonce, signature } = req.body;
+        // E2E PRIVACY: encryptedAmount is an opaque FHE handle, inputProof the
+        // client-side ZK proof (bound to this relayer + the exchange). The
+        // plaintext order size never reaches this process.
+        const { vaultId, baseToken, encryptedAmount, inputProof, isBuy, slippageBPS, maxDeviationBPS, gasRefundWei, deadline, nonce, signature } = req.body;
 
         // Validate required fields
-        if (!vaultId || baseToken === undefined || !amountBase || slippageBPS === undefined || !deadline || nonce === undefined || !signature) {
+        if (!vaultId || baseToken === undefined || !encryptedAmount || !inputProof || slippageBPS === undefined || !deadline || nonce === undefined || !signature) {
           return res.status(400).json({ error: 'Missing required fields' });
         }
 
         // baseToken must be a valid address (address(0) = native ETH is allowed)
         if (typeof baseToken !== 'string' || !ethers.isAddress(baseToken)) {
           return res.status(400).json({ error: 'Invalid baseToken address' });
+        }
+
+        if (typeof encryptedAmount !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(encryptedAmount)) {
+          return res.status(400).json({ error: 'Invalid encryptedAmount handle' });
+        }
+        // Input proofs are a few KB; hard-cap to keep the endpoint cheap to abuse
+        if (typeof inputProof !== 'string' || !/^0x[0-9a-fA-F]*$/.test(inputProof) || inputProof.length > 200_000) {
+          return res.status(400).json({ error: 'Invalid inputProof' });
         }
 
         if (!validateDeadlineOrReject(deadline, res)) return;
@@ -524,7 +538,7 @@ class KeeperRelayerService {
         const message = {
           vaultId: BigInt(vaultId),
           baseToken: ethers.getAddress(baseToken),
-          amountBase: BigInt(amountBase),
+          encryptedAmount,
           isBuy: Boolean(isBuy),
           slippageToleranceBPS: Number(slippageBPS),
           maxPriceDeviationBPS: Number(maxDeviationBPS),
@@ -547,11 +561,13 @@ class KeeperRelayerService {
         // logs persist on disk; the pairing is not public information.
         console.log(`[RELAY] createOrder: vaultId=${vaultId}, baseToken=${baseToken}, gasRefundWei=${refundWei}`);
 
-        // Submit transaction (relayer is tx.from, NOT the user)
-        const tx = await this.exchange.createMarketOrderViaRelayer(
+        // Submit transaction (relayer is tx.from, NOT the user; calldata carries
+        // only the FHE handle + proof, never the plaintext size)
+        const tx = await this.exchange.createEncryptedOrderViaRelayer(
           vaultId,
           baseToken,
-          amountBase,
+          encryptedAmount,
+          inputProof,
           isBuy,
           slippageBPS,
           maxDeviationBPS,

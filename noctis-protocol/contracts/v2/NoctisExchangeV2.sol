@@ -22,7 +22,9 @@ import "../interfaces/AggregatorV3Interface.sol";
  *      (wrapped/unwrapped via WETH around the router).
  *
  * Trading flow (identical to V1, per pair):
- * 1. createMarketOrder[ViaRelayer]   — encrypted base amount stored on-chain
+ * 1. createMarketOrder (self-relay, plaintext) or createEncryptedOrderViaRelayer
+ *    (E2E: client-encrypted externalEuint128 + input proof — the plaintext size
+ *    never appears in calldata or at the relayer)
  * 2. requestSwapExecution[ViaRelayer] — handles made publicly decryptable;
  *    SELL also locks the base debit in the vault (FHE.select gate)
  * 3. executeSwapCallback / executeSwapViaRelayer — proof-verified execution;
@@ -193,6 +195,7 @@ contract NoctisExchangeV2 is ReentrancyGuard, Pausable, AccessControl, GatewayCa
     error InsufficientEncryptedBalance();
     error GasRefundTooHigh(uint256 requested, uint256 maximum);
     error OutputTooSmallForFees();
+    error OrderAmountOutOfBounds();
     error FeeTooHigh(uint256 requested, uint256 maximum);
 
     // ============================================
@@ -387,19 +390,27 @@ contract NoctisExchangeV2 is ReentrancyGuard, Pausable, AccessControl, GatewayCa
         );
     }
 
-    /// @notice Relayer path: user identified by opaque vaultId, gas refund signed off-chain
-    function createMarketOrderViaRelayer(
+    /// @notice Relayer path with a client-side encrypted amount (E2E privacy).
+    /// @dev Neither the relayer nor the public calldata ever carries the plaintext
+    ///      size — only an FHE handle + ZK input proof. The InputVerifier binds the
+    ///      proof to (userAddress = msg.sender = relayer, contractAddress = this),
+    ///      so the browser encrypts against that pair. Amount bounds (zero/min/max)
+    ///      cannot revert on ciphertext at creation; they are enforced at settlement
+    ///      on the KMS-proven cleartext (see _checkAmountBounds in executeSwap*).
+    function createEncryptedOrderViaRelayer(
         uint256 vaultId,
         address baseToken,
-        uint128 amountBase,
+        externalEuint128 encryptedAmount,
+        bytes calldata inputProof,
         bool isBuy,
         uint16 slippageToleranceBPS,
         uint16 maxPriceDeviationBPS,
         uint128 gasRefundWei
     ) external onlyRelayer nonReentrant whenNotPaused returns (uint256) {
         address user = vault.getAddressByVaultId(vaultId);
-        return _createMarketOrder(
-            user, vaultId, baseToken, amountBase, isBuy, slippageToleranceBPS, maxPriceDeviationBPS, gasRefundWei
+        euint128 encAmount = FHE.fromExternal(encryptedAmount, inputProof);
+        return _storeOrder(
+            user, vaultId, baseToken, encAmount, isBuy, slippageToleranceBPS, maxPriceDeviationBPS, gasRefundWei
         );
     }
 
@@ -418,6 +429,34 @@ contract NoctisExchangeV2 is ReentrancyGuard, Pausable, AccessControl, GatewayCa
         if (amountBase == 0) revert ZeroAmount();
         if (amountBase < cfg.minOrderSize) revert BelowMinimumOrderSize();
         if (amountBase > cfg.maxOrderSize) revert ExceedsMaximumOrderSize();
+
+        return _storeOrder(
+            user,
+            vaultId,
+            baseToken,
+            FHE.asEuint128(amountBase),
+            isBuy,
+            slippageToleranceBPS,
+            maxPriceDeviationBPS,
+            gasRefundWei
+        );
+    }
+
+    /// @dev Shared creation tail: cleartext param checks, rate limits, storage, ACL.
+    ///      `encryptedAmountBase` comes either from FHE.asEuint128 (plaintext path,
+    ///      bounds already checked) or FHE.fromExternal (encrypted path, bounds
+    ///      deferred to settlement).
+    function _storeOrder(
+        address user,
+        uint256 vaultId,
+        address baseToken,
+        euint128 encryptedAmountBase,
+        bool isBuy,
+        uint16 slippageToleranceBPS,
+        uint16 maxPriceDeviationBPS,
+        uint128 gasRefundWei
+    ) internal returns (uint256 orderId) {
+        if (!tradeConfigs[baseToken].enabled) revert TokenNotTradable();
 
         if (gasRefundWei > maxGasRefundWei) {
             revert GasRefundTooHigh(gasRefundWei, maxGasRefundWei);
@@ -448,7 +487,6 @@ contract NoctisExchangeV2 is ReentrancyGuard, Pausable, AccessControl, GatewayCa
         ordersCreatedThisBlock++;
         lastOrderBlock[user] = block.number;
 
-        euint128 encryptedAmountBase = FHE.asEuint128(amountBase);
         eaddress encTrader = FHE.asEaddress(user);
 
         orderId = ++orderCounter;
@@ -587,6 +625,7 @@ contract NoctisExchangeV2 is ReentrancyGuard, Pausable, AccessControl, GatewayCa
             amountHandles[0] = FHE.toBytes32(order.encryptedAmountBase);
             FHE.checkSignatures(amountHandles, cleartexts, decryptionProof);
             uint128 amountBase = abi.decode(cleartexts, (uint128));
+            _checkAmountBounds(order.baseToken, amountBase);
             _prepareBuySufficiency(orderId, msg.sender, amountBase);
             return;
         }
@@ -596,6 +635,7 @@ contract NoctisExchangeV2 is ReentrancyGuard, Pausable, AccessControl, GatewayCa
         handles[1] = swapSufficiencyHandles[orderId];
         FHE.checkSignatures(handles, cleartexts, decryptionProof);
         (uint128 sellAmount, bool hasSufficient) = abi.decode(cleartexts, (uint128, bool));
+        _checkAmountBounds(order.baseToken, sellAmount);
         if (!hasSufficient) revert InsufficientEncryptedBalance();
 
         order.status = OrderStatus.Filled;
@@ -633,6 +673,7 @@ contract NoctisExchangeV2 is ReentrancyGuard, Pausable, AccessControl, GatewayCa
             FHE.checkSignatures(amountHandles, cleartexts, decryptionProof);
             uint128 buyAmount = abi.decode(cleartexts, (uint128));
             if (buyAmount != amount) revert InvalidSwapAmount();
+            _checkAmountBounds(order.baseToken, amount);
             _prepareBuySufficiency(orderId, trader, amount);
             return;
         }
@@ -644,6 +685,7 @@ contract NoctisExchangeV2 is ReentrancyGuard, Pausable, AccessControl, GatewayCa
 
         (uint128 sellAmountDecoded, bool hasSufficient) = abi.decode(cleartexts, (uint128, bool));
         if (sellAmountDecoded != amount) revert InvalidSwapAmount();
+        _checkAmountBounds(order.baseToken, amount);
         if (!hasSufficient) revert InsufficientEncryptedBalance();
 
         order.status = OrderStatus.Filled;
@@ -692,6 +734,17 @@ contract NoctisExchangeV2 is ReentrancyGuard, Pausable, AccessControl, GatewayCa
 
         emit OrderFilledSimple(orderId, block.timestamp);
         _emitFilledPrivate(orderId, FHE.toBytes32(order.encryptedAmountBase), amountOut, trader);
+    }
+
+    /// @dev Settlement-time amount bounds. Orders created through the encrypted
+    ///      relayer path skip cleartext bounds at creation; enforce them here on
+    ///      the KMS-proven amount. Out-of-bounds orders revert and are freed via
+    ///      the normal cancelSwapExecution/cancelOrder path.
+    function _checkAmountBounds(address baseToken, uint128 amount) internal view {
+        TradeConfig storage cfg = tradeConfigs[baseToken];
+        if (amount == 0 || amount < cfg.minOrderSize || amount > cfg.maxOrderSize) {
+            revert OrderAmountOutOfBounds();
+        }
     }
 
     /// @dev BUY step 1: quote USDC need from the oracle + lock it in the vault

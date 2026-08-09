@@ -4,14 +4,14 @@ schema:
   file: ./schema.graphql
 dataSources:
   # NoctisVaultV2 - Token-generic vault (native ETH = address(0))
-  # Deployed on Sepolia ~block 11450620; startBlock set slightly earlier.
+  # Deployed on Sepolia ~block 11451450 (V2.1 E2E encrypted intents); startBlock set slightly earlier.
   - kind: ethereum/contract
     name: NoctisVaultV2
     network: sepolia
     source:
-      address: "0xe65b394c8A4347D92bc665C60c6263Eb115d21A7"
+      address: "0xd44934cD92C5FA8D093e77248A96de9cDa799874"
       abi: NoctisVaultV2
-      startBlock: 11450500
+      startBlock: 11451400
     mapping:
       kind: ethereum/events
       apiVersion: 0.0.7
@@ -48,9 +48,9 @@ dataSources:
     name: NoctisExchangeV2
     network: sepolia
     source:
-      address: "0xCa06f9981407D0469DA5f9ffE78A6684DECD7d56"
+      address: "0xD0bf1679e9C59f91AEB5e8c39c6D5b718d89f46e"
       abi: NoctisExchangeV2
-      startBlock: 11450500
+      startBlock: 11451400
     mapping:
       kind: ethereum/events
       apiVersion: 0.0.7

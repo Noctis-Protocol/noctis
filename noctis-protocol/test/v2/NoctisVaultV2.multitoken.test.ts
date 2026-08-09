@@ -199,6 +199,30 @@ describe("NoctisVaultV2 - Multi-Token Vault (Mock Mode)", function () {
     });
   });
 
+  // VaultId privacy -------------------------------------------------------------
+
+  describe("pseudo-random vaultIds", function () {
+    it("assigns non-sequential, stable, distinct vaultIds", async function () {
+      await vault.connect(user).depositETH({ value: E18(1) });
+      await vault.connect(other).depositETH({ value: E18(1) });
+
+      const idUser = await vault.connect(user).getMyVaultId();
+      const idOther = await vault.connect(other).getMyVaultId();
+
+      expect(idUser).to.not.equal(0n);
+      expect(idOther).to.not.equal(0n);
+      expect(idUser).to.not.equal(idOther);
+      // PRIVACY: sequential ids (1, 2, 3…) would let observers rebuild the
+      // vaultId<->address table from public first-deposit ordering
+      expect(idUser > 1_000_000n || idOther > 1_000_000n).to.be.true;
+      expect(idOther - idUser).to.not.equal(1n);
+
+      // Stable across subsequent deposits
+      await vault.connect(user).depositETH({ value: E18(1) });
+      expect(await vault.connect(user).getMyVaultId()).to.equal(idUser);
+    });
+  });
+
   // Withdrawals ---------------------------------------------------------------
 
   describe("multi-token withdrawals (self-relay roundtrip)", function () {

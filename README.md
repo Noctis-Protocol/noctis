@@ -18,19 +18,19 @@ What stays private, from whom:
 - **Vault balances — encrypted end-to-end.** Holdings live as FHE ciphertexts;
   the decryption ACL is granted to the owner only. Nobody — relayer included —
   can read a position or reconstruct balances before/after a trade.
-- **Unlinkability against casual observers, not determined ones.** Relayed
-  orders are submitted by the relayer: `tx.from` is the relayer and the trader
-  address appears in no event or public getter. However, the relayed
-  transaction's **calldata carries the order amount, direction and an opaque
-  vaultId in cleartext**, and vaultIds can be correlated back to addresses
-  with effort (deposit ordering, raw storage reads). End-to-end encrypted
-  intents that close this are roadmapped —
-  see `ROADMAP_E2E_ENCRYPTED_INTENTS.md`.
-- **Trusted relayer for order size.** The signed intent carries the amount in
-  cleartext, so the relayer sees *who trades how much* before submitting (the
-  size becomes public anyway at Uniswap settlement). The relayer never has
-  custody and cannot alter the order (EIP-712-signed parameters). Self-relayed
-  orders remove this third party at the cost of gas + `tx.from` exposure.
+- **End-to-end encrypted order size.** The amount is encrypted in the browser
+  (ZAMA FHE input + ZK proof); the relayer and the public calldata only ever
+  carry an opaque handle. Nobody — relayer included — learns the size before
+  settlement. Order bounds are enforced on the KMS-proven cleartext at
+  execution time.
+- **Unlinkability with known limits.** `tx.from` is the relayer and the trader
+  appears in no event or getter; vaultIds are pseudo-random (not sequential).
+  Residual: a user's orders share a vaultId (cluster together), and raw
+  storage reads can still link a vaultId to its address — one-time order keys
+  are the phase B fix (`ROADMAP_E2E_ENCRYPTED_INTENTS.md`).
+- **Trusted relayer for liveness only.** The relayer can censor or delay, but
+  cannot read amounts, decrypt balances, alter EIP-712-signed parameters, or
+  move funds outside the signed paths.
 - **Fill size is public at settlement** — inherent to settling on Uniswap.
 
 ## Monorepo

@@ -381,10 +381,11 @@ export default function DocsPage() {
                       </tr>
                       <tr>
                         <td className="px-5 py-3.5">
-                          Stored order state (FHE ciphertexts: amount, trader)
+                          Order size, end to end (browser-encrypted FHE input —
+                          opaque to the relayer and to calldata)
                         </td>
                         <td className="px-5 py-3.5">
-                          Relayed-order calldata (amount, direction, vaultId)
+                          Pair, direction and an opaque vaultId in relayed calldata
                         </td>
                       </tr>
                       <tr>
@@ -409,18 +410,19 @@ export default function DocsPage() {
                   fill after inclusion.
                 </p>
                 <p className="mt-3 max-w-[65ch] text-sm leading-relaxed text-ink-500">
-                  <strong className="font-semibold text-ink-700">Order size is
-                  not hidden pre-settlement on the relayed path.</strong> The
-                  signed order carries the amount and direction in cleartext:
-                  the relayer sees them, and they also appear in the relayed
-                  transaction&apos;s calldata on-chain. What stays protected is
-                  the trader link — no event, getter or{" "}
-                  <span className="font-mono text-xs">tx.from</span> names the
-                  trader, though a determined observer can correlate vaultIds
-                  with effort. The relayer never has custody, cannot alter the
-                  signed parameters, and cannot decrypt vault balances.
-                  End-to-end encrypted intents (the relayer and calldata carry
-                  only FHE handles) are on the roadmap.
+                  <strong className="font-semibold text-ink-700">The order
+                  size is encrypted end to end.</strong> Your browser encrypts
+                  the amount with the Zama SDK (FHE ciphertext + ZK input
+                  proof) before anything leaves the page: the relayer, the
+                  transaction calldata and the on-chain order all carry an
+                  opaque handle, never the plaintext. The size only becomes
+                  public at settlement, where the Uniswap fill reveals it
+                  anyway. Residual metadata: the pair, direction and a
+                  pseudo-random vaultId are visible in relayed calldata, so a
+                  user&apos;s orders can be clustered — one-time order keys
+                  are the next hardening step. The relayer can censor or
+                  delay, but cannot read amounts, alter the EIP-712-signed
+                  parameters, or decrypt vault balances.
                 </p>
                 <p className="mt-3 max-w-[65ch] text-sm leading-relaxed text-ink-500">
                   The desk market panel shows the selected pair&apos;s Uniswap V2
@@ -455,7 +457,7 @@ export default function DocsPage() {
                 </p>
                 <ol className="mt-6 max-w-[65ch] space-y-4">
                   {[
-                    "The user signs the order parameters (EIP-712), including a gas refund amount quoted by the relayer. The relayer sees the size; on-chain it is stored as an FHE ciphertext, unlinkable to the trader.",
+                    "The browser encrypts the order amount (Zama FHE input + ZK proof) and the user signs the resulting handle (EIP-712), including a gas refund amount quoted by the relayer. The relayer never sees the size.",
                     "The relayer verifies the signature off-chain and creates the order on the exchange contract.",
                     "The exchange requests decryption of the amount, and of balance sufficiency on sells, through the Zama Gateway.",
                     "With the decryption proof verified on-chain, the exchange swaps on Uniswap as a proxy.",
@@ -549,9 +551,10 @@ export default function DocsPage() {
                   claim this is trustless. Defense in depth compensates:
                   deposit and withdrawal caps, on-chain balance checks,
                   emergency pause, suspicious-value events, and a timelock on
-                  admin surfaces. The single relayer sees the full order it
-                  relays (trader, size, direction) and can censor or delay,
-                  but cannot decrypt vault balances, cannot alter signed
+                  admin surfaces. The single relayer sees the trader identity,
+                  pair and direction of the orders it relays — but not the
+                  size (encrypted end to end). It can censor or delay, but
+                  cannot decrypt balances or amounts, cannot alter signed
                   parameters, and cannot move funds outside the signed paths.
                 </p>
                 <p className="mt-3 max-w-[65ch] text-sm leading-relaxed text-ink-500">

@@ -3,8 +3,8 @@
   "chainId": 11155111,
   "updatedAt": "2026-08-09",
   "contracts": {
-    "NoctisVaultV2": "0xe65b394c8A4347D92bc665C60c6263Eb115d21A7",
-    "NoctisExchangeV2": "0xCa06f9981407D0469DA5f9ffE78A6684DECD7d56",
+    "NoctisVaultV2": "0xd44934cD92C5FA8D093e77248A96de9cDa799874",
+    "NoctisExchangeV2": "0xD0bf1679e9C59f91AEB5e8c39c6D5b718d89f46e",
     "USDC": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
     "UniswapV2Router": "0xC532a74256D3Db42D0Bf7a0400fEFDbad7694008",
     "EthUsdPriceFeed": "0x694AA1769357215DE4FAC081bf1f309aDC325306",
@@ -27,7 +27,7 @@
       "vaultConfigured": true,
       "exchangeConfigured": true,
       "minOrderBase": "1543",
-      "maxOrderBase": "92580"
+      "maxOrderBase": "92591"
     },
     "nLINK": {
       "address": "0xA09EC0B0A6b0387DFbF0e14a18572BDb54cd8913",
@@ -40,8 +40,8 @@
       "poolSeedTx": "0x90a85c0845018d4e64f8e501c47a2c6dc740c75ef48cd1e5900e0e4749353d5e",
       "vaultConfigured": true,
       "exchangeConfigured": true,
-      "minOrderBase": "120584933394912039",
-      "maxOrderBase": "7235096003694722359"
+      "minOrderBase": "120429243979275731",
+      "maxOrderBase": "7225754638756543873"
     },
     "nDAI": {
       "address": "0xFeaD8B309127f48Ec8028927d8a3c4Fcda50031D",
@@ -73,15 +73,15 @@
     }
   },
   "subgraph": {
-    "version": "v2.0.1",
-    "queryUrl": "https://api.studio.thegraph.com/query/1724540/noctis-protocol/v2.0.1",
-    "startBlock": 11450500,
+    "version": "v2.2.0",
+    "queryUrl": "https://api.studio.thegraph.com/query/1724540/noctis-protocol/v2.2.0",
+    "startBlock": 11451400,
     "studioUrl": "https://thegraph.com/studio/subgraph/noctis-protocol",
     "name": "noctis-protocol"
   },
   "ops": {
     "relayer": "0xB63063402eD60d4630bc575dEC5458CDB94d16D6",
     "timelock": "0x6fa358E424341F60338620f26AB297553E551A7D",
-    "timelockConfiguredAt": "2026-08-09T07:20:25.073Z"
+    "timelockConfiguredAt": "2026-08-09T10:13:31.135Z"
   }
 }

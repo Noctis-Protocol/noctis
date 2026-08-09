@@ -76,7 +76,7 @@ contract NoctisVaultV2 is ReentrancyGuard, Pausable, Ownable, GatewayCaller {
 
     mapping(uint256 => address) private vaultOwners;
     mapping(address => uint256) private userVaultId;
-    uint256 private nextVaultId = 1;
+    uint256 private vaultIdNonce;
 
     // ============================================
     // WITHDRAWAL STATE
@@ -387,10 +387,19 @@ contract NoctisVaultV2 is ReentrancyGuard, Pausable, Ownable, GatewayCaller {
         emit Deposited(token, msg.sender);
     }
 
-    /// @dev Silent vaultId assignment on first deposit (no event: privacy)
+    /// @dev Silent vaultId assignment on first deposit (no event: privacy).
+    ///      PRIVACY: ids are pseudo-random, not sequential — sequential ids let an
+    ///      observer rebuild the vaultId<->address table by replaying the public
+    ///      ordering of first deposits. (Raw storage reads can still link; see
+    ///      ROADMAP_E2E_ENCRYPTED_INTENTS.md phase B.)
     function _assignVaultIdIfNeeded(address user) private {
         if (userVaultId[user] == 0) {
-            uint256 vid = nextVaultId++;
+            uint256 vid;
+            do {
+                vid = uint256(
+                    keccak256(abi.encodePacked(user, block.prevrandao, address(this), ++vaultIdNonce))
+                );
+            } while (vid == 0 || vaultOwners[vid] != address(0));
             userVaultId[user] = vid;
             vaultOwners[vid] = user;
         }

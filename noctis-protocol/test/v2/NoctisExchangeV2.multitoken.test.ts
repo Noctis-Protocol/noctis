@@ -174,6 +174,35 @@ describe("NoctisExchangeV2 - Multi-Pair Trading (Mock Mode)", function () {
     return args.orderId;
   }
 
+  /**
+   * E2E-private relayer path: the amount is encrypted client-side
+   * (externalEuint128 + input proof bound to the relayer/exchange pair) and
+   * never appears in calldata.
+   */
+  async function createEncryptedRelayerOrder(
+    relayer: HardhatEthersSigner,
+    vaultId: bigint,
+    baseToken: string,
+    amount: bigint,
+    isBuy: boolean,
+    gasRefundWei = 0n,
+    slipBPS = 100,
+    devBPS = 150
+  ): Promise<bigint> {
+    const enc = await fhevm
+      .createEncryptedInput(exchangeAddress, relayer.address)
+      .add128(amount)
+      .encrypt();
+    const tx = await exchange
+      .connect(relayer)
+      .createEncryptedOrderViaRelayer(
+        vaultId, baseToken, enc.handles[0], enc.inputProof, isBuy, slipBPS, devBPS, gasRefundWei
+      );
+    const args = parseEvent(await tx.wait(), "OrderCreated");
+    expect(args).to.not.be.null;
+    return args.orderId;
+  }
+
   async function requestExecution(orderId: bigint): Promise<string[]> {
     const tx = await exchange.connect(user).requestSwapExecution(orderId);
     const args = parseEvent(await tx.wait(), "SwapDecryptionReady");
@@ -416,10 +445,9 @@ describe("NoctisExchangeV2 - Multi-Pair Trading (Mock Mode)", function () {
       await depositToVault(wbtc, E8(1));
       const vaultId = await vault.connect(user).getMyVaultId();
 
-      const tx = await exchange.createMarketOrderViaRelayer(
-        vaultId, wbtcAddress, E8(0.5), false, 100, 150, GAS_REFUND_WEI
+      const orderId = await createEncryptedRelayerOrder(
+        owner, vaultId, wbtcAddress, E8(0.5), false, GAS_REFUND_WEI
       );
-      const orderId = parseEvent(await tx.wait(), "OrderCreated").orderId;
 
       const handles = await requestExecution(orderId);
       const receipt = await executeSell(orderId, handles);
@@ -449,10 +477,9 @@ describe("NoctisExchangeV2 - Multi-Pair Trading (Mock Mode)", function () {
       await depositToVault(usdc, E6(50_000));
       const vaultId = await vault.connect(user).getMyVaultId();
 
-      const tx = await exchange.createMarketOrderViaRelayer(
-        vaultId, wbtcAddress, E8(0.5), true, 100, 150, GAS_REFUND_WEI
+      const orderId = await createEncryptedRelayerOrder(
+        owner, vaultId, wbtcAddress, E8(0.5), true, GAS_REFUND_WEI
       );
-      const orderId = parseEvent(await tx.wait(), "OrderCreated").orderId;
 
       const handles = await requestExecution(orderId);
       await executeBuy(orderId, handles);
@@ -472,6 +499,84 @@ describe("NoctisExchangeV2 - Multi-Pair Trading (Mock Mode)", function () {
       await expect(
         exchange.setGasRecipient.staticCall(ethers.ZeroAddress)
       ).to.be.revertedWithCustomError(exchange, "InvalidFeeRecipient");
+    });
+  });
+
+  // E2E-encrypted intents ----------------------------------------------------------
+  // The relayed order amount travels as an FHE handle + input proof: it never
+  // appears in calldata and the relayer never sees the plaintext. Amount bounds
+  // are enforced at settlement on the KMS-proven cleartext.
+
+  describe("encrypted relayer orders (E2E privacy)", function () {
+    beforeEach(async function () {
+      await exchange.grantRole(await exchange.RELAYER_ROLE(), owner.address);
+    });
+
+    it("settles a SELL created from an encrypted amount", async function () {
+      await depositToVault(wbtc, E8(1));
+      const vaultId = await vault.connect(user).getMyVaultId();
+
+      const orderId = await createEncryptedRelayerOrder(owner, vaultId, wbtcAddress, E8(0.5), false);
+      const handles = await requestExecution(orderId);
+      const receipt = await executeSell(orderId, handles);
+      expect(parseEvent(receipt, "OrderFilledSimple")).to.not.be.null;
+
+      const grossOut = E8(0.5) * 598n;
+      const fee = (grossOut * 5n) / 10_000n;
+      expect(await usdc.balanceOf(vaultAddress)).to.equal(grossOut - fee);
+    });
+
+    it("rejects non-relayer callers", async function () {
+      await depositToVault(wbtc, E8(1));
+      const vaultId = await vault.connect(user).getMyVaultId();
+      const enc = await fhevm
+        .createEncryptedInput(exchangeAddress, attacker.address)
+        .add128(E8(0.5))
+        .encrypt();
+      // .staticCall: the fhevm hardhat plugin masks reverts on sendTransaction
+      await expect(
+        exchange.connect(attacker).createEncryptedOrderViaRelayer.staticCall(
+          vaultId, wbtcAddress, enc.handles[0], enc.inputProof, false, 100, 150, 0
+        )
+      ).to.be.revertedWithCustomError(exchange, "OnlyRelayer");
+    });
+
+    it("enforces amount bounds at settlement (below min reverts, funds recoverable)", async function () {
+      await depositToVault(wbtc, E8(1));
+      const vaultId = await vault.connect(user).getMyVaultId();
+
+      // Below minOrderSize (E8(0.0001)) — creation must succeed (amount is ciphertext)
+      const orderId = await createEncryptedRelayerOrder(owner, vaultId, wbtcAddress, E8(0.00001), false);
+      const handles = await requestExecution(orderId);
+
+      const dec = await fhevm.publicDecrypt(handles);
+      await expect(
+        exchange
+          .connect(user)
+          .executeSwapCallback.staticCall(orderId, dec.abiEncodedClearValues, dec.decryptionProof, 0)
+      ).to.be.revertedWithCustomError(exchange, "OrderAmountOutOfBounds");
+
+      // Recovery path: cancel the swap leg, then the order
+      await exchange.connect(user).cancelSwapExecution(orderId);
+      await exchange.connect(user).cancelOrder(orderId);
+      const [, , , status] = await exchange.getOrderPublic(orderId);
+      expect(status).to.equal(3n); // Cancelled
+    });
+
+    it("enforces amount bounds at settlement (above max reverts)", async function () {
+      await depositToVault(wbtc, E8(1));
+      const vaultId = await vault.connect(user).getMyVaultId();
+
+      // Above maxOrderSize (E8(100)) — sufficiency will be false too, but the
+      // bounds check must fire first with a deterministic error
+      const orderId = await createEncryptedRelayerOrder(owner, vaultId, wbtcAddress, E8(500), false);
+      const handles = await requestExecution(orderId);
+      const dec = await fhevm.publicDecrypt(handles);
+      await expect(
+        exchange
+          .connect(user)
+          .executeSwapCallback.staticCall(orderId, dec.abiEncodedClearValues, dec.decryptionProof, 0)
+      ).to.be.revertedWithCustomError(exchange, "OrderAmountOutOfBounds");
     });
   });
 

@@ -1,0 +1,77 @@
+/**
+ * Browser-side FHE input encryption (E2E privacy for relayed orders).
+ *
+ * The order amount is encrypted in the browser with the ZAMA relayer SDK web
+ * build (WASM): the plaintext never reaches our relayer, our API routes, or
+ * the public calldata — only an FHE handle + ZK input proof leave the page.
+ *
+ * The input proof must be bound to (contractAddress = exchange,
+ * userAddress = relayer wallet): on-chain, FHE.fromExternal verifies the
+ * proof against msg.sender, which is the relayer on the relayed path.
+ */
+
+type WebSdk = {
+  initSDK: () => Promise<void>;
+  createInstance: (config: Record<string, unknown>) => Promise<BrowserFheInstance>;
+  SepoliaConfig: Record<string, unknown>;
+};
+
+interface BrowserFheInstance {
+  createEncryptedInput: (
+    contractAddress: string,
+    userAddress: string
+  ) => {
+    add128: (value: bigint) => void;
+    encrypt: () => Promise<{ handles: Uint8Array[]; inputProof: Uint8Array }>;
+  };
+}
+
+let instancePromise: Promise<BrowserFheInstance> | null = null;
+
+async function getBrowserInstance(): Promise<BrowserFheInstance> {
+  if (!instancePromise) {
+    instancePromise = (async () => {
+      const sdk = (await import(
+        "@zama-fhe/relayer-sdk/web"
+      )) as unknown as WebSdk;
+      await sdk.initSDK();
+      return sdk.createInstance({
+        ...sdk.SepoliaConfig,
+        network: "https://ethereum-sepolia-rpc.publicnode.com",
+      });
+    })().catch((err) => {
+      // Allow a retry on transient failures (CDN/WASM load, network)
+      instancePromise = null;
+      throw err;
+    });
+  }
+  return instancePromise;
+}
+
+function toHex(bytes: Uint8Array): `0x${string}` {
+  return ("0x" +
+    Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join(
+      ""
+    )) as `0x${string}`;
+}
+
+/** Warm the WASM + FHE keys in the background (call on desk load). */
+export function prewarmFheEncryption(): void {
+  void getBrowserInstance().catch(() => {});
+}
+
+/**
+ * Encrypt an order amount for the relayed path.
+ * Returns the FHE handle (signed in the EIP-712 intent) and the input proof.
+ */
+export async function encryptAmountForRelayer(
+  exchangeAddress: string,
+  relayerAddress: string,
+  amount: bigint
+): Promise<{ encryptedAmount: `0x${string}`; inputProof: `0x${string}` }> {
+  const instance = await getBrowserInstance();
+  const input = instance.createEncryptedInput(exchangeAddress, relayerAddress);
+  input.add128(amount);
+  const { handles, inputProof } = await input.encrypt();
+  return { encryptedAmount: toHex(handles[0]), inputProof: toHex(inputProof) };
+}
