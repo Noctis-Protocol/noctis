@@ -72,6 +72,13 @@
       "maxOrderBase": "51890545"
     }
   },
+  "subgraph": {
+    "version": "v2.0.1",
+    "queryUrl": "https://api.studio.thegraph.com/query/1724540/noctis-protocol/v2.0.1",
+    "startBlock": 11450500,
+    "studioUrl": "https://thegraph.com/studio/subgraph/noctis-protocol",
+    "name": "noctis-protocol"
+  },
   "ops": {
     "relayer": "0xB63063402eD60d4630bc575dEC5458CDB94d16D6",
     "timelock": "0x6fa358E424341F60338620f26AB297553E551A7D",
