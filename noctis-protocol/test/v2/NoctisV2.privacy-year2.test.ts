@@ -72,7 +72,9 @@ describe("NoctisV2 - Year 2 privacy (stealth exits)", function () {
     await vault
       .connect(user)
       .requestWithdrawalPrivate(token, enc.handles[0], enc.handles[1], enc.inputProof);
-    return vault.withdrawalCounter();
+    // Stealth exits v2: ids are random and the request event is anonymous
+    const ids = await vault.connect(user).getMyWithdrawalRequestIds();
+    return ids[ids.length - 1];
   }
 
   async function executeWithdrawal(requestId: bigint) {
@@ -173,9 +175,92 @@ describe("NoctisV2 - Year 2 privacy (stealth exits)", function () {
     expect(await wbtc.balanceOf(user.address)).to.equal(E8(5));
   });
 
+  // Stealth exits v2: unlink request from payout ------------------------------
+
+  it("assigns pseudo-random, non-sequential request ids", async function () {
+    const id1 = await requestStealthWithdrawal(wbtcAddress, E8(0.1), user.address);
+    await vault.connect(user).cancelWithdrawal(id1);
+    const id2 = await requestStealthWithdrawal(wbtcAddress, E8(0.1), user.address);
+
+    expect(id1).to.not.equal(id2);
+    expect(id2).to.not.equal(id1 + 1n); // not a counter
+    expect(id1 > 1_000_000n || id2 > 1_000_000n).to.be.true; // keccak-sized draws
+  });
+
+  it("emits an anonymous request event (no requestId, no requester)", async function () {
+    const enc = await fhevm
+      .createEncryptedInput(vaultAddress, user.address)
+      .add128(E8(0.1))
+      .addAddress(user.address)
+      .encrypt();
+    const tx = await vault
+      .connect(user)
+      .requestWithdrawalPrivate(wbtcAddress, enc.handles[0], enc.handles[1], enc.inputProof);
+    const receipt = await tx.wait();
+
+    let args: any = null;
+    for (const log of receipt!.logs) {
+      try {
+        const parsed = vault.interface.parseLog(log);
+        if (parsed?.name === "WithdrawalRequested") args = parsed.args;
+      } catch {}
+    }
+    expect(args).to.not.be.null;
+    // Only (token, timestamp) — nothing joinable to the later payout
+    expect(args.length).to.equal(2);
+    expect(args[0]).to.equal(wbtcAddress);
+  });
+
+  it("lets a third party (keeper) execute a due withdrawal — no requester tx", async function () {
+    const stealth = ethers.Wallet.createRandom().address;
+    const requestId = await requestStealthWithdrawal(wbtcAddress, E8(0.25), stealth);
+
+    // attacker/keeper — anyone — runs the execution flow
+    const tx = await vault.connect(attacker).requestWithdrawalExecution(requestId);
+    const receipt = await tx.wait();
+    let handles: string[] = [];
+    for (const log of receipt!.logs) {
+      try {
+        const parsed = vault.interface.parseLog(log);
+        if (parsed?.name === "DecryptionReady") handles = [...parsed.args.handles];
+      } catch {}
+    }
+    const dec = await fhevm.publicDecrypt(handles);
+    await vault
+      .connect(attacker)
+      .executeWithdrawalCallback(requestId, dec.abiEncodedClearValues, dec.decryptionProof);
+
+    // Payout landed although the requester signed nothing after the request
+    expect(await wbtc.balanceOf(stealth)).to.equal(E8(0.25));
+  });
+
+  it("getDueWithdrawals tracks the keeper work queue across the window", async function () {
+    await vault.setWithdrawalBatchWindow(600);
+    const requestId = await requestStealthWithdrawal(wbtcAddress, E8(0.1), user.address);
+
+    // Inside the window: not due yet
+    expect(await vault.getDueWithdrawals()).to.deep.equal([]);
+
+    await ethers.provider.send("evm_increaseTime", [600]);
+    await ethers.provider.send("evm_mine", []);
+    expect(await vault.getDueWithdrawals()).to.deep.equal([requestId]);
+
+    // Executed -> removed from the queue
+    await executeWithdrawal(requestId);
+    expect(await vault.getDueWithdrawals()).to.deep.equal([]);
+  });
+
+  it("cancel removes the request from the due queue", async function () {
+    const requestId = await requestStealthWithdrawal(wbtcAddress, E8(0.1), user.address);
+    expect(await vault.getDueWithdrawals()).to.deep.equal([requestId]);
+    await vault.connect(user).cancelWithdrawal(requestId);
+    expect(await vault.getDueWithdrawals()).to.deep.equal([]);
+  });
+
   it("plaintext self-withdrawal path is unchanged (2 handles, claimable ETH)", async function () {
     await vault.connect(user).requestWithdrawal(ethers.ZeroAddress, E18(0.5));
-    const requestId = await vault.withdrawalCounter();
+    const ids = await vault.connect(user).getMyWithdrawalRequestIds();
+    const requestId = ids[ids.length - 1];
     const handles = await executeWithdrawal(requestId);
 
     expect(handles.length).to.equal(2);

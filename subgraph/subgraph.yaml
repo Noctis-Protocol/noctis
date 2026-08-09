@@ -4,14 +4,14 @@ schema:
   file: ./schema.graphql
 dataSources:
   # NoctisVaultV2 - Token-generic vault (native ETH = address(0))
-  # Deployed on Sepolia ~block 11451880 (V2.3 year 2: stealth exits — encrypted withdrawal recipients); startBlock set slightly earlier.
+  # Deployed on Sepolia ~block 11452210 (V2.4 stealth exits v2: anonymous request event, random requestIds, keeper-executed payouts); startBlock set slightly earlier.
   - kind: ethereum/contract
     name: NoctisVaultV2
     network: sepolia
     source:
-      address: "0x4242E5E8eAC807c9Dd499472C72A6aE3AB0b1323"
+      address: "0x08142032CbA4af8FbABE923619dF92F23BDB8122"
       abi: NoctisVaultV2
-      startBlock: 11451850
+      startBlock: 11452180
     mapping:
       kind: ethereum/events
       apiVersion: 0.0.7
@@ -30,7 +30,7 @@ dataSources:
         # ETH amount recovered from msg.value which is public anyway)
         - event: Deposited(indexed address,address)
           handler: handleDeposited
-        - event: WithdrawalRequested(indexed uint256,address,address,uint256)
+        - event: WithdrawalRequested(indexed address,uint256)
           handler: handleWithdrawalRequested
         - event: WithdrawalExecuted(indexed uint256,address,uint256)
           handler: handleWithdrawalExecuted
@@ -48,9 +48,9 @@ dataSources:
     name: NoctisExchangeV2
     network: sepolia
     source:
-      address: "0xdc4E8bfa902414FC58C8f69dacB3E1a4F94ecC1c"
+      address: "0x58Df90A2bf5d3e0A5D66e4CCe2778eb6b15920F7"
       abi: NoctisExchangeV2
-      startBlock: 11451850
+      startBlock: 11452180
     mapping:
       kind: ethereum/events
       apiVersion: 0.0.7

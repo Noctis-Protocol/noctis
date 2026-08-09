@@ -321,6 +321,14 @@ const EIP712_TYPES = {
 const VAULT_ABI = [
   'function paused() view returns (bool)',
   'function getAddressByVaultId(uint256 vaultId) view returns (address)',
+
+  // PRIVACY (stealth exits v2): the keeper executes due withdrawals at batch
+  // window boundaries so the requester's wallet never touches the payout path.
+  'function getDueWithdrawals() view returns (uint256[])',
+  'function getWithdrawalRequest(uint256 requestId) view returns (tuple(uint256 requestId, address requester, address token, bytes32 encryptedAmount, bytes32 hasSufficientBalance, uint256 requestTime, bool executed, bool decryptionRequested, uint256 decryptionRequestTime, bytes32 encRecipient))',
+  'function requestWithdrawalExecution(uint256 requestId)',
+  'function executeWithdrawalCallback(uint256 requestId, bytes cleartexts, bytes decryptionProof)',
+  'event DecryptionReady(uint256 indexed requestId, bytes32[] handles)',
 ];
 
 const EXCHANGE_ABI = [
@@ -374,6 +382,10 @@ class KeeperRelayerService {
   // Economic anti-grief policy: gas refunds are only collected at settlement,
   // so relayed create/cancel loops are bounded off-chain (privacy-neutral).
   private policy: RelayPolicy;
+  // Stealth exits v2: withdrawal executor state
+  private fheInstance: any = null;
+  private withdrawalsInFlight = new Set<string>();
+  private withdrawalBackoff = new Map<string, { fails: number; nextTryMs: number }>();
 
   constructor() {
     if (!CONFIG.privateKey) {
@@ -633,7 +645,8 @@ class KeeperRelayerService {
 
         // PRIVACY: never log amount/direction next to the vault identity —
         // logs persist on disk; the pairing is not public information.
-        console.log(`[RELAY] createOrder: vaultId=${vaultId}, baseToken=${baseToken}, gasRefundWei=${refundWei}`);
+        // PRIVACY: do not log the pseudonym next to timing/pair metadata
+        console.log(`[RELAY] createOrder: baseToken=${baseToken}, gasRefundWei=${refundWei}`);
 
         // Submit transaction (relayer is tx.from, NOT the user; calldata carries
         // only the FHE handle + proof, never the plaintext size)
@@ -957,6 +970,7 @@ class KeeperRelayerService {
 
     // Start cleanup polling loop
     console.log(`🔄 Cleanup polling every ${CONFIG.pollIntervalMs / 1000}s`);
+    console.log(`💸 Withdrawal executor: due payouts settled by the keeper at batch-window boundaries`);
     console.log('');
     console.log('Press Ctrl+C to stop');
     console.log('─'.repeat(67));
@@ -983,6 +997,10 @@ class KeeperRelayerService {
           await this.processExchangeEvents(fromBlock, toBlock);
           this.lastProcessedBlock = currentBlock;
         }
+
+        // PRIVACY (stealth exits v2): execute due withdrawals so the
+        // requester's wallet never signs the payout path (no tx.from link)
+        await this.processDueWithdrawals();
 
         await this.sleep(CONFIG.pollIntervalMs);
       } catch (error: any) {
@@ -1035,6 +1053,93 @@ class KeeperRelayerService {
         console.error('Exchange event processing error:', error.message?.slice(0, 50));
       }
     }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // WITHDRAWAL EXECUTOR (stealth exits v2)
+  // ═══════════════════════════════════════════════════════════════════════
+
+  /** Lazy ZAMA relayer SDK instance for publicDecrypt. */
+  private async getFheInstance(): Promise<any> {
+    if (this.fheInstance) return this.fheInstance;
+    const sdk: any = await import('@zama-fhe/relayer-sdk/node');
+    const cfg = sdk.SepoliaConfigV2 || sdk.SepoliaConfig;
+    this.fheInstance = await sdk.createInstance({ ...cfg, network: CONFIG.rpcUrl });
+    return this.fheInstance;
+  }
+
+  /**
+   * Execute every withdrawal past its batch-window boundary. Payout txs are
+   * sent by the keeper wallet, so the requester never links itself to the
+   * (possibly stealth) recipient via tx.from. requestIds are pseudonymous;
+   * amounts/recipients are NEVER logged here.
+   */
+  private async processDueWithdrawals(): Promise<void> {
+    let due: bigint[];
+    try {
+      due = await this.vaultReader.getDueWithdrawals();
+    } catch {
+      return; // pre-v2.4 vault or transient RPC failure
+    }
+
+    for (const id of due) {
+      const key = id.toString();
+      if (this.withdrawalsInFlight.has(key)) continue;
+      const backoff = this.withdrawalBackoff.get(key);
+      if (backoff && Date.now() < backoff.nextTryMs) continue;
+
+      this.withdrawalsInFlight.add(key);
+      try {
+        await this.executeWithdrawalFlow(id);
+        this.withdrawalBackoff.delete(key);
+      } catch (error: any) {
+        const fails = (backoff?.fails ?? 0) + 1;
+        // Exponential backoff, capped at 1h — e.g. a circuit-breaker pause
+        // keeps the request pending; do not hammer it every poll.
+        const delayMs = Math.min(60_000 * 2 ** fails, 3_600_000);
+        this.withdrawalBackoff.set(key, { fails, nextTryMs: Date.now() + delayMs });
+        console.error(
+          `[WITHDRAW] #…${key.slice(-6)} failed (attempt ${fails}):`,
+          (error.reason || error.message || '').slice(0, 80)
+        );
+      } finally {
+        this.withdrawalsInFlight.delete(key);
+      }
+    }
+  }
+
+  private async executeWithdrawalFlow(requestId: bigint): Promise<void> {
+    const req = await this.vaultReader.getWithdrawalRequest(requestId);
+    if (req.executed) return;
+
+    let handles: string[];
+    if (!req.decryptionRequested) {
+      const tx = await this.vault.requestWithdrawalExecution(requestId);
+      const receipt = await tx.wait();
+      this.recordGas(receipt);
+      handles = [];
+      for (const log of receipt?.logs ?? []) {
+        try {
+          const parsed = this.vault.interface.parseLog(log);
+          if (parsed?.name === 'DecryptionReady') handles = [...parsed.args.handles];
+        } catch {}
+      }
+      if (!handles.length) throw new Error('DecryptionReady event missing');
+    } else {
+      // Crash recovery: rebuild the handle set from the public struct
+      handles = [req.encryptedAmount, req.hasSufficientBalance];
+      if (req.encRecipient !== ethers.ZeroHash) handles.push(req.encRecipient);
+    }
+
+    const instance = await this.getFheInstance();
+    const dec = await instance.publicDecrypt(handles);
+    const cbTx = await this.vault.executeWithdrawalCallback(
+      requestId,
+      dec.abiEncodedClearValues,
+      dec.decryptionProof
+    );
+    this.recordGas(await cbTx.wait());
+    console.log(`[${this.ts()}] 💸 Withdrawal #…${requestId.toString().slice(-6)} executed, tx=${cbTx.hash}`);
   }
 
   /** Record the actual gas fee burned by a relayed transaction. */

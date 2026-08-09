@@ -427,7 +427,10 @@ export default function DocsPage() {
                   exits</strong>: the payout destination is encrypted in your
                   browser and revealed on-chain only when the payout executes,
                   so funds can land on a fresh address with no prior link to
-                  you. Residual metadata: the pair and
+                  you. The payout is unlinkable to the request: the request
+                  event is anonymous, request ids are pseudo-random, and the
+                  keeper — not your wallet — signs the execution at the batch
+                  window boundary. Residual metadata: the pair and
                   direction stay visible in relayed calldata. The relayer can
                   censor or delay, but cannot read amounts, alter the
                   EIP-712-signed parameters, or decrypt vault balances.
@@ -523,8 +526,9 @@ export default function DocsPage() {
                 </div>
                 <p className="mt-6 max-w-[65ch] leading-relaxed text-ink-600">
                   Withdrawals follow a two-step pattern: the user requests a
-                  withdrawal through the encrypted debit path, and once
-                  authorized, the payout executes in a separate transaction.
+                  withdrawal through the encrypted debit path, and the keeper
+                  automatically executes the payout at the next batch window —
+                  the requester&apos;s wallet never signs the payout path.
                   The destination can be an encrypted stealth address — hidden
                   on-chain until the payout itself — with ETH pushed directly
                   so the fresh address never needs gas to receive it.

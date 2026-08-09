@@ -31,6 +31,10 @@ What stays private, from whom:
   **stealth exits** let funds leave to a browser-encrypted destination that is
   revealed only when the payout executes — a fresh address with no prior
   on-chain link to the requester (ETH is pushed directly, no gas needed).
+  The payout itself is **unlinkable**: the request event is anonymous (no
+  requestId, no requester), request ids are pseudo-random, and the keeper —
+  not the requester's wallet — signs the execution at the window boundary,
+  so calldata/event observers have no join key between request and payout.
   Residual: raw storage reads (`eth_getStorageAt`) can still link a live
   pseudonym or balance slot to its address — removing that entirely needs a
   shielded-pool design, out of scope for this contract generation

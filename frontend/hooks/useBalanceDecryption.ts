@@ -210,9 +210,13 @@ export function useBalanceDecryption(): UseBalanceDecryptionReturn {
       // new ephemeral FHE.asEuint128(0) handle each call — those have no ACL.
       let rawHandle: string | undefined;
       try {
-        const res = await fetch(
-          `/api/fhevm/balance-handle?user=${encodeURIComponent(address)}&token=${encodeURIComponent(token.address)}`
-        );
+        // PRIVACY: POST body — never put the user address in a query string
+        // (it would land in access logs / proxies)
+        const res = await fetch("/api/fhevm/balance-handle", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ user: address, token: token.address }),
+        });
         const raw = await res.text();
         let data: { error?: string; empty?: boolean; handle?: string };
         try {

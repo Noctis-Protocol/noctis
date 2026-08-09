@@ -597,7 +597,8 @@ describe("NoctisExchangeV2 - Multi-Pair Trading (Mock Mode)", function () {
       // Lock restored: the FULL 1 WBTC is withdrawable again
       const reqTx = await vault.connect(user).requestWithdrawal(wbtcAddress, E8(1));
       await reqTx.wait();
-      const requestId = await vault.withdrawalCounter();
+      const wids = await vault.connect(user).getMyWithdrawalRequestIds();
+      const requestId = wids[wids.length - 1];
       const execTx = await vault.connect(user).requestWithdrawalExecution(requestId);
       const receipt = await execTx.wait();
       let handles: string[] = [];

@@ -599,20 +599,12 @@ export class WithdrawalRequested__Params {
     this._event = event;
   }
 
-  get requestId(): BigInt {
-    return this._event.parameters[0].value.toBigInt();
-  }
-
-  get requester(): Address {
-    return this._event.parameters[1].value.toAddress();
-  }
-
   get token(): Address {
-    return this._event.parameters[2].value.toAddress();
+    return this._event.parameters[0].value.toAddress();
   }
 
   get timestamp(): BigInt {
-    return this._event.parameters[3].value.toBigInt();
+    return this._event.parameters[1].value.toBigInt();
   }
 }
 
@@ -1143,6 +1135,29 @@ export class NoctisVaultV2 extends ethereum.SmartContract {
     return ethereum.CallResult.fromValue(value[0].toAddress());
   }
 
+  getDueWithdrawals(): Array<BigInt> {
+    let result = super.call(
+      "getDueWithdrawals",
+      "getDueWithdrawals():(uint256[])",
+      [],
+    );
+
+    return result[0].toBigIntArray();
+  }
+
+  try_getDueWithdrawals(): ethereum.CallResult<Array<BigInt>> {
+    let result = super.tryCall(
+      "getDueWithdrawals",
+      "getDueWithdrawals():(uint256[])",
+      [],
+    );
+    if (result.reverted) {
+      return new ethereum.CallResult();
+    }
+    let value = result.value;
+    return ethereum.CallResult.fromValue(value[0].toBigIntArray());
+  }
+
   getEncryptedBalance(user: Address, token: Address): Bytes {
     let result = super.call(
       "getEncryptedBalance",
@@ -1228,6 +1243,29 @@ export class NoctisVaultV2 extends ethereum.SmartContract {
     }
     let value = result.value;
     return ethereum.CallResult.fromValue(value[0].toBigInt());
+  }
+
+  getMyWithdrawalRequestIds(): Array<BigInt> {
+    let result = super.call(
+      "getMyWithdrawalRequestIds",
+      "getMyWithdrawalRequestIds():(uint256[])",
+      [],
+    );
+
+    return result[0].toBigIntArray();
+  }
+
+  try_getMyWithdrawalRequestIds(): ethereum.CallResult<Array<BigInt>> {
+    let result = super.tryCall(
+      "getMyWithdrawalRequestIds",
+      "getMyWithdrawalRequestIds():(uint256[])",
+      [],
+    );
+    if (result.reverted) {
+      return new ethereum.CallResult();
+    }
+    let value = result.value;
+    return ethereum.CallResult.fromValue(value[0].toBigIntArray());
   }
 
   getSupportedTokens(): Array<Address> {

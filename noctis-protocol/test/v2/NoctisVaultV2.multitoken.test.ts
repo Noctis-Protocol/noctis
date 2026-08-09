@@ -85,7 +85,10 @@ describe("NoctisVaultV2 - Multi-Token Vault (Mock Mode)", function () {
   async function withdraw(token: string, amount: bigint) {
     const reqTx = await vault.connect(user).requestWithdrawal(token, amount);
     await reqTx.wait();
-    const requestId = await vault.withdrawalCounter();
+    // Stealth exits v2: ids are random and the request event is anonymous —
+    // read the caller-scoped list instead
+    const ids = await vault.connect(user).getMyWithdrawalRequestIds();
+    const requestId = ids[ids.length - 1];
 
     const execTx = await vault.connect(user).requestWithdrawalExecution(requestId);
     const execReceipt = await execTx.wait();
@@ -329,7 +332,8 @@ describe("NoctisVaultV2 - Multi-Token Vault (Mock Mode)", function () {
       const daiAddr = await dai.getAddress();
 
       await vault.connect(user).requestWithdrawal(daiAddr, E18(300));
-      const requestId = await vault.withdrawalCounter();
+      const ids = await vault.connect(user).getMyWithdrawalRequestIds();
+      const requestId = ids[ids.length - 1];
 
       // Immediate cancel allowed before decryption starts
       await expect(vault.connect(user).cancelWithdrawal(requestId))
@@ -344,7 +348,8 @@ describe("NoctisVaultV2 - Multi-Token Vault (Mock Mode)", function () {
     it("only the requester can cancel", async function () {
       await depositToken(dai, E18(100));
       await vault.connect(user).requestWithdrawal(await dai.getAddress(), E18(50));
-      const requestId = await vault.withdrawalCounter();
+      const ids = await vault.connect(user).getMyWithdrawalRequestIds();
+      const requestId = ids[ids.length - 1];
 
       await expect(
         vault.connect(other).cancelWithdrawal(requestId)
@@ -367,7 +372,8 @@ describe("NoctisVaultV2 - Multi-Token Vault (Mock Mode)", function () {
       // Second withdrawal (8 LINK) exceeds the 10 LINK daily cap -> pause + pending
       const reqTx = await vault.connect(user).requestWithdrawal(linkAddr, E18(8));
       await reqTx.wait();
-      const requestId = await vault.withdrawalCounter();
+      const ids = await vault.connect(user).getMyWithdrawalRequestIds();
+      const requestId = ids[ids.length - 1];
       const execTx = await vault.connect(user).requestWithdrawalExecution(requestId);
       const decEvent = parseDecryptionReady(await execTx.wait());
       const dec = await fhevm.publicDecrypt(decEvent!.handles);

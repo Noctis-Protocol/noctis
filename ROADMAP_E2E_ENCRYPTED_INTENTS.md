@@ -1,6 +1,6 @@
 # Roadmap — End-to-End Encrypted Intents
 
-**Status:** Phases A, B **and Year 2 (stealth exits)** SHIPPED (2026-08-09).
+**Status:** Phases A, B, Year 2 (stealth exits) **and stealth exits v2 (unlinkable payouts)** SHIPPED (2026-08-09).
 
 - **Phase A** — `createEncryptedOrderViaRelayer` (browser-side FHE input
   encryption, bounds enforced at settlement) and pseudo-random vaultIds.
@@ -36,6 +36,28 @@
     the moment funds return to a spendable wallet — is where unlinkability
     pays; the lifecycle is now: attributable deposit → encrypted sizes +
     one-time pseudonyms while trading → stealth exit.
+- **Stealth exits v2 — unlinkable payouts** — live on Sepolia (V2.4):
+  the audit of V2.3 found the stealth exit leaked the requester↔recipient
+  link three ways: the shared `requestId` joined `WithdrawalRequested` to
+  `WithdrawalExecuted`; sequential request ids were reconstructible; and the
+  requester's own wallet signed the execution txs (`tx.from`). Fixes:
+  - **Anonymous request event:** `WithdrawalRequested(token, timestamp)` —
+    no requestId, no requester. The requester recovers its ids via the
+    caller-scoped `getMyWithdrawalRequestIds()`; the subgraph only counts.
+  - **Pseudo-random requestIds:** keccak draws (same scheme as vaultIds), so
+    payout-side ids cannot be replayed into an ordering.
+  - **Keeper-executed payouts:** `requestWithdrawalExecution` is now
+    permissionless after the batch window; the keeper polls
+    `getDueWithdrawals()` and runs decrypt + callback from ITS wallet.
+    The requester signs nothing after the request tx — no `tx.from` join.
+    (A third party starting decryption only delays cancel by the bounded
+    decryption timeout; payout gas is borne by the keeper — testnet-fine,
+    fee line item later.)
+  - **Metadata:** `balance-handle` moved GET→POST (no user address in access
+    logs); vaultId scrubbed from relayer request logs.
+  - Residual: archive-node storage replay (`withdrawalRequests[id].requester`)
+    still reveals the link — same accepted storage-read boundary as
+    `vaultOwners`; and cancellation intentionally re-links (no payout ever).
 - **Explicitly out of scope (V3+, with rationale):**
   - **Removing `orderTraders`/`vaultOwners` plaintext storage entirely:**
     cryptographically blocked on fhEVM — the settlement credit path must index

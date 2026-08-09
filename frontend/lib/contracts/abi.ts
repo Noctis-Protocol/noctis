@@ -239,15 +239,22 @@ export const NoctisVaultABI = [
       { name: "user", type: "address", indexed: false },
     ],
   },
+  // PRIVACY (stealth exits v2): anonymous event — the requestId is read via
+  // the caller-scoped getMyWithdrawalRequestIds() instead
   {
     name: "WithdrawalRequested",
     type: "event",
     inputs: [
-      { name: "requestId", type: "uint256", indexed: true },
-      { name: "requester", type: "address", indexed: false },
-      { name: "token", type: "address", indexed: false },
+      { name: "token", type: "address", indexed: true },
       { name: "timestamp", type: "uint256", indexed: false },
     ],
+  },
+  {
+    name: "getMyWithdrawalRequestIds",
+    type: "function",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256[]" }],
   },
   {
     name: "WithdrawalExecuted",

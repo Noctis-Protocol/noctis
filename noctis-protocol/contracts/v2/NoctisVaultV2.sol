@@ -102,6 +102,19 @@ contract NoctisVaultV2 is ReentrancyGuard, Pausable, Ownable, GatewayCaller {
     mapping(uint256 => WithdrawalRequest) public withdrawalRequests;
     uint256 public withdrawalCounter;
 
+    /// @dev PRIVACY (stealth exits v2): requestIds are pseudo-random draws, not
+    ///      sequential — without a public id in the request event, calldata/event
+    ///      observers cannot join a request to its later payout.
+    uint256 private withdrawalIdNonce;
+
+    /// @dev Caller-scoped request tracking (the request event is anonymous)
+    mapping(address => uint256[]) private userWithdrawalRequestIds;
+
+    /// @dev Active (not yet executed/cancelled) request ids — lets the keeper
+    ///      discover due payouts without an id-bearing request event.
+    uint256[] private activeWithdrawalIds;
+    mapping(uint256 => uint256) private activeWithdrawalIndex; // id -> index + 1
+
     /// @dev H-1: bound the pending queue per user
     mapping(address => uint256) private pendingWithdrawalCount;
     uint256 public constant MAX_PENDING_WITHDRAWALS_PER_USER = 1;
@@ -238,7 +251,11 @@ contract NoctisVaultV2 is ReentrancyGuard, Pausable, Ownable, GatewayCaller {
 
     event TransferFeeDetected(address user, uint256 requestedAmount, uint256 actualReceived, uint256 feeLost);
 
-    event WithdrawalRequested(uint256 indexed requestId, address requester, address token, uint256 timestamp);
+    /// @dev PRIVACY (stealth exits v2): anonymous — no requestId, no requester.
+    ///      The requester reads its ids via getMyWithdrawalRequestIds(); without
+    ///      a public join key, the later payout (keeper tx) cannot be linked to
+    ///      this request by calldata/event observers.
+    event WithdrawalRequested(address indexed token, uint256 timestamp);
     event WithdrawalExecuted(uint256 indexed requestId, address recipient, uint256 amount);
     event WithdrawalCancelled(uint256 indexed requestId, address requester);
     event WithdrawalExecutionFailed(uint256 indexed requestId);
@@ -558,7 +575,8 @@ contract NoctisVaultV2 is ReentrancyGuard, Pausable, Ownable, GatewayCaller {
             FHE.allowThis(encRecipient);
         }
 
-        uint256 requestId = ++withdrawalCounter;
+        ++withdrawalCounter; // kept as a public count (metrics); ids are random
+        uint256 requestId = _drawRequestId();
         withdrawalRequests[requestId] = WithdrawalRequest({
             requestId: requestId,
             requester: msg.sender,
@@ -573,14 +591,46 @@ contract NoctisVaultV2 is ReentrancyGuard, Pausable, Ownable, GatewayCaller {
         });
 
         pendingWithdrawalCount[msg.sender]++;
+        userWithdrawalRequestIds[msg.sender].push(requestId);
+        _trackActive(requestId);
 
-        emit WithdrawalRequested(requestId, msg.sender, token, block.timestamp);
+        emit WithdrawalRequested(token, block.timestamp);
         return requestId;
+    }
+
+    /// @dev Draw an unused pseudo-random withdrawal request id
+    function _drawRequestId() private returns (uint256 id) {
+        do {
+            id = uint256(
+                keccak256(abi.encodePacked(msg.sender, block.prevrandao, address(this), ++withdrawalIdNonce))
+            );
+        } while (id == 0 || withdrawalRequests[id].requestId != 0);
+    }
+
+    function _trackActive(uint256 id) private {
+        activeWithdrawalIndex[id] = activeWithdrawalIds.length + 1;
+        activeWithdrawalIds.push(id);
+    }
+
+    /// @dev Swap-and-pop removal; no-op if already untracked
+    function _untrackActive(uint256 id) private {
+        uint256 idx = activeWithdrawalIndex[id];
+        if (idx == 0) return;
+        uint256 last = activeWithdrawalIds[activeWithdrawalIds.length - 1];
+        activeWithdrawalIds[idx - 1] = last;
+        activeWithdrawalIndex[last] = idx;
+        activeWithdrawalIds.pop();
+        delete activeWithdrawalIndex[id];
     }
 
     /**
      * @notice Mark withdrawal handles publicly decryptable (step 2 of self-relay)
-     * @dev Only the amount and a sufficiency boolean are decrypted — never the balance
+     * @dev Only the amount and a sufficiency boolean are decrypted — never the balance.
+     *      PRIVACY (stealth exits v2): PERMISSIONLESS — the keeper (or anyone)
+     *      executes due payouts at window boundaries so the requester's wallet
+     *      never has to touch the payout path (no tx.from link). The batch
+     *      window still gates everyone; a third party starting decryption only
+     *      delays cancellation by DECRYPTION_TIMEOUT (bounded, accepted).
      */
     function requestWithdrawalExecution(uint256 requestId) external nonReentrant whenNotPaused {
         WithdrawalRequest storage request = withdrawalRequests[requestId];
@@ -588,7 +638,6 @@ contract NoctisVaultV2 is ReentrancyGuard, Pausable, Ownable, GatewayCaller {
         if (request.requestId == 0) revert WithdrawalNotFound();
         if (request.executed) revert WithdrawalAlreadyExecuted();
         if (request.decryptionRequested) revert DecryptionAlreadyRequested();
-        if (request.requester != msg.sender) revert NotWithdrawalRequester();
 
         // PRIVACY (phase B): quantize claim timing to batch-window boundaries
         uint256 window = withdrawalBatchWindow;
@@ -721,6 +770,7 @@ contract NoctisVaultV2 is ReentrancyGuard, Pausable, Ownable, GatewayCaller {
         // nothing to restore. Mark handled and stop.
         if (!hasSufficientBalance) {
             request.executed = true;
+            _untrackActive(requestId);
             if (pendingWithdrawalCount[requester] > 0) {
                 pendingWithdrawalCount[requester]--;
             }
@@ -738,6 +788,7 @@ contract NoctisVaultV2 is ReentrancyGuard, Pausable, Ownable, GatewayCaller {
 
         // Effects before interactions
         request.executed = true;
+        _untrackActive(requestId);
         if (pendingWithdrawalCount[requester] > 0) {
             pendingWithdrawalCount[requester]--;
         }
@@ -781,6 +832,7 @@ contract NoctisVaultV2 is ReentrancyGuard, Pausable, Ownable, GatewayCaller {
         }
 
         request.executed = true;
+        _untrackActive(requestId);
         if (pendingWithdrawalCount[msg.sender] > 0) {
             pendingWithdrawalCount[msg.sender]--;
         }
@@ -1155,6 +1207,39 @@ contract NoctisVaultV2 is ReentrancyGuard, Pausable, Ownable, GatewayCaller {
 
     function getWithdrawalRequest(uint256 requestId) external view returns (WithdrawalRequest memory) {
         return withdrawalRequests[requestId];
+    }
+
+    /// @notice PRIVACY (stealth exits v2): the request event is anonymous, so
+    ///         the requester recovers its own request ids here. Like all
+    ///         msg.sender-scoped views this is spoofable via eth_call `from`
+    ///         override — same class as the accepted storage-read residual.
+    function getMyWithdrawalRequestIds() external view returns (uint256[] memory) {
+        return userWithdrawalRequestIds[msg.sender];
+    }
+
+    /// @notice Request ids past their batch-window boundary and not executed —
+    ///         the keeper's work queue. Entries may already be in the
+    ///         decryption-requested state (keeper crash recovery): check
+    ///         `withdrawalRequests(id).decryptionRequested` before acting.
+    function getDueWithdrawals() external view returns (uint256[] memory due) {
+        uint256 window = withdrawalBatchWindow;
+        uint256 n = activeWithdrawalIds.length;
+        uint256[] memory tmp = new uint256[](n);
+        uint256 count;
+        for (uint256 i; i < n; ++i) {
+            uint256 id = activeWithdrawalIds[i];
+            WithdrawalRequest storage r = withdrawalRequests[id];
+            if (r.executed) continue;
+            if (window != 0) {
+                uint256 boundary = ((r.requestTime / window) + 1) * window;
+                if (block.timestamp < boundary) continue;
+            }
+            tmp[count++] = id;
+        }
+        due = new uint256[](count);
+        for (uint256 i; i < count; ++i) {
+            due[i] = tmp[i];
+        }
     }
 
     // ============================================

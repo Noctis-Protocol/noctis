@@ -224,7 +224,8 @@ describe("NoctisV2 - Phase B privacy (one-time vaultIds, batched withdrawals)", 
       await vault.setWithdrawalBatchWindow(WINDOW);
 
       await vault.connect(user).requestWithdrawal(wbtcAddress, E8(0.25));
-      const requestId = await vault.withdrawalCounter();
+      const ids = await vault.connect(user).getMyWithdrawalRequestIds();
+      const requestId = ids[ids.length - 1];
 
       // Immediately after the request: still inside the batch window
       await expect(
@@ -250,7 +251,8 @@ describe("NoctisV2 - Phase B privacy (one-time vaultIds, batched withdrawals)", 
     it("window disabled (0) keeps the immediate path", async function () {
       expect(await vault.withdrawalBatchWindow()).to.equal(0n);
       await vault.connect(user).requestWithdrawal(wbtcAddress, E8(0.25));
-      const requestId = await vault.withdrawalCounter();
+      const ids = await vault.connect(user).getMyWithdrawalRequestIds();
+      const requestId = ids[ids.length - 1];
       // No revert: immediate execution allowed
       await vault.connect(user).requestWithdrawalExecution(requestId);
     });

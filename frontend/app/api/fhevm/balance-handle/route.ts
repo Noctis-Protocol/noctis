@@ -1,5 +1,5 @@
 /**
- * GET /api/fhevm/balance-handle?user=0x…&token=<tokenAddress>
+ * POST /api/fhevm/balance-handle  { user: "0x…", token: "<tokenAddress>" }
  *
  * Returns the on-chain encrypted balance handle via a FHE-capable RPC.
  * Browser public RPCs often mis-simulate fhEVM eth_calls.
@@ -76,14 +76,22 @@ function resolveToken(raw: string | null): `0x${string}` | null {
   return null;
 }
 
-export async function GET(request: NextRequest) {
+/**
+ * PRIVACY (metadata hardening): POST with the user address in the body — a
+ * query param would land in standard access logs (Vercel, proxies, browser
+ * history). Responses are Cache-Control: no-store.
+ */
+export async function POST(request: NextRequest) {
   const blocked = guardFhevmApi(request, { route: "balance-handle", limit: 120 });
   if (blocked) return blocked;
 
   try {
-    const { searchParams } = new URL(request.url);
-    const user = searchParams.get("user");
-    const token = resolveToken(searchParams.get("token"));
+    const body = (await request.json().catch(() => ({}))) as {
+      user?: string;
+      token?: string;
+    };
+    const user = body.user ?? null;
+    const token = resolveToken(body.token ?? null);
 
     if (!user || !/^0x[a-fA-F0-9]{40}$/.test(user)) {
       return json({ error: "Missing or invalid user address" }, 400);

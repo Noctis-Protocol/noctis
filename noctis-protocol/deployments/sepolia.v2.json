@@ -3,8 +3,8 @@
   "chainId": 11155111,
   "updatedAt": "2026-08-09",
   "contracts": {
-    "NoctisVaultV2": "0x4242E5E8eAC807c9Dd499472C72A6aE3AB0b1323",
-    "NoctisExchangeV2": "0xdc4E8bfa902414FC58C8f69dacB3E1a4F94ecC1c",
+    "NoctisVaultV2": "0x08142032CbA4af8FbABE923619dF92F23BDB8122",
+    "NoctisExchangeV2": "0x58Df90A2bf5d3e0A5D66e4CCe2778eb6b15920F7",
     "USDC": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
     "UniswapV2Router": "0xC532a74256D3Db42D0Bf7a0400fEFDbad7694008",
     "EthUsdPriceFeed": "0x694AA1769357215DE4FAC081bf1f309aDC325306",
@@ -27,7 +27,7 @@
       "vaultConfigured": true,
       "exchangeConfigured": true,
       "minOrderBase": "1540",
-      "maxOrderBase": "92441"
+      "maxOrderBase": "92445"
     },
     "nLINK": {
       "address": "0xA09EC0B0A6b0387DFbF0e14a18572BDb54cd8913",
@@ -40,8 +40,8 @@
       "poolSeedTx": "0x90a85c0845018d4e64f8e501c47a2c6dc740c75ef48cd1e5900e0e4749353d5e",
       "vaultConfigured": true,
       "exchangeConfigured": true,
-      "minOrderBase": "120563126250088915",
-      "maxOrderBase": "7233787575005334918"
+      "minOrderBase": "120592846104838890",
+      "maxOrderBase": "7235570766290333456"
     },
     "nDAI": {
       "address": "0xFeaD8B309127f48Ec8028927d8a3c4Fcda50031D",
@@ -68,20 +68,20 @@
       "poolSeedTx": "0x6d6a9e51c45ff4ad43cad0529e33017560260023690d856722f174f57a5a1213",
       "vaultConfigured": true,
       "exchangeConfigured": true,
-      "minOrderBase": "864842",
-      "maxOrderBase": "51890545"
+      "minOrderBase": "864902",
+      "maxOrderBase": "51894135"
     }
   },
   "ops": {
     "relayer": "0xB63063402eD60d4630bc575dEC5458CDB94d16D6",
     "timelock": "0x6fa358E424341F60338620f26AB297553E551A7D",
-    "timelockConfiguredAt": "2026-08-09T11:19:49.672Z",
+    "timelockConfiguredAt": "2026-08-09T12:27:01.015Z",
     "withdrawalBatchWindowSeconds": 300
   },
   "subgraph": {
-    "version": "v2.4.0",
-    "queryUrl": "https://api.studio.thegraph.com/query/1724540/noctis-protocol/v2.4.0",
-    "startBlock": 11451850,
+    "version": "v2.5.0",
+    "queryUrl": "https://api.studio.thegraph.com/query/1724540/noctis-protocol/v2.5.0",
+    "startBlock": 11452180,
     "studioUrl": "https://thegraph.com/studio/subgraph/noctis-protocol",
     "name": "noctis-protocol"
   }

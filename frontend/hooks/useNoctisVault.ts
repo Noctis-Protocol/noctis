@@ -268,37 +268,23 @@ export function useNoctisVault(options?: UseNoctisVaultOptions): UseNoctisVaultR
             return null;
           }
 
-          // Extract requestId from WithdrawalRequested logs
+          // PRIVACY (stealth exits v2): the request event is anonymous (no
+          // requestId, no requester) — read the caller-scoped id list instead.
           let requestId: bigint | null = null;
-          for (const log of receipt.logs) {
-            try {
-              const decoded = decodeEventLog({
-                abi: NoctisVaultABI,
-                data: log.data,
-                topics: log.topics,
-              });
-              if (decoded.eventName === "WithdrawalRequested") {
-                requestId = (decoded.args as { requestId: bigint }).requestId;
-                break;
-              }
-            } catch {
-              continue;
-            }
-          }
-          // Fallback: first indexed topic
-          if (requestId == null) {
-            for (const log of receipt.logs) {
-              if (log.topics.length > 1 && log.topics[1]) {
-                try {
-                  requestId = BigInt(log.topics[1] as string);
-                  break;
-                } catch { /* continue */ }
-              }
-            }
+          try {
+            const ids = (await publicClient.readContract({
+              address: contracts.vaultAddress as `0x${string}`,
+              abi: NoctisVaultABI,
+              functionName: "getMyWithdrawalRequestIds",
+              account: address,
+            })) as bigint[];
+            requestId = ids.length ? ids[ids.length - 1] : null;
+          } catch {
+            requestId = null;
           }
 
           setSuccess(
-            `Withdrawal request #${requestId?.toString() || "pending"} submitted! Click Execute to complete privately.`
+            "Withdrawal request submitted! The keeper will pay it out automatically at the next batch window."
           );
           window.dispatchEvent(new CustomEvent("noctis:transaction-success", {
             detail: { type: "withdrawal", hash, token: token.symbol, requestId: requestId?.toString() },

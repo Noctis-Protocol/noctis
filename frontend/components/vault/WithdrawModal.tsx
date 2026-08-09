@@ -187,9 +187,11 @@ export function WithdrawModal({ open, onOpenChange }: WithdrawModalProps) {
             <div>
               <p className="font-medium text-brand-900">Private Withdrawal</p>
               <p className="text-brand-600 mt-0.5">
-                Amount and destination are encrypted client-side. Funds go to{" "}
+                Amount and destination are encrypted client-side. The keeper pays
+                out automatically at the next batch window — your wallet never
+                signs the payout, so funds land on{" "}
                 {stealthMode && stealthRecipient ? "your private destination" : "your wallet"}{" "}
-                after the two-step execute flow
+                with no on-chain link
                 {token?.isNative && !(stealthMode && stealthRecipient) ? " (ETH goes to Ready to claim)" : ""}.
               </p>
             </div>
@@ -200,9 +202,10 @@ export function WithdrawModal({ open, onOpenChange }: WithdrawModalProps) {
             <div className="flex items-start gap-3 p-3 rounded-xl bg-green-50 mb-4 text-sm">
               <CheckCircle className="h-4 w-4 text-green-600 mt-0.5" />
               <div>
-                <p className="font-medium text-green-900">Withdrawal Request #{requestId.toString()} Submitted!</p>
+                <p className="font-medium text-green-900">Withdrawal Request Submitted!</p>
                 <p className="text-green-600 mt-0.5">
-                  Go to your balance panel and click &quot;Execute&quot; to complete privately.
+                  The keeper will pay it out automatically at the next batch
+                  window. You can also execute it manually from the Activity panel.
                 </p>
               </div>
             </div>

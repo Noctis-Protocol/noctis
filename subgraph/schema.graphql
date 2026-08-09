@@ -52,7 +52,7 @@ type Withdrawal @entity {
 
   # Request info
   requestId: BigInt!
-  user: Bytes!                         # Requester address (exposed by event)
+  user: Bytes!                         # Payout recipient (stealth exits v2: requester only visible on cancellation)
 
   # Asset info
   token: Bytes                         # Token address (0x0 = native ETH)

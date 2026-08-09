@@ -91,57 +91,44 @@ export function handleDeposited(event: Deposited): void {
 
 /**
  * Handler: Withdrawal Requested
- * Event: WithdrawalRequested(uint256 indexed requestId, address requester, address token, uint256 timestamp)
- * Amounts are encrypted at request time; only known after execution.
+ * Event: WithdrawalRequested(address indexed token, uint256 timestamp)
+ *
+ * PRIVACY (stealth exits v2): the event is ANONYMOUS — no requestId, no
+ * requester. Only aggregate counters are updated here; the Withdrawal entity
+ * is created at execution (or cancellation), where the payout is public.
+ * Never attempt to recover the requester from tx.from here — that would
+ * defeat the on-chain unlinkability this event was redesigned for.
  */
 export function handleWithdrawalRequested(event: WithdrawalRequested): void {
-  let id = event.params.requestId.toString();
-  let withdrawal = new Withdrawal(id);
-
-  withdrawal.requestId = event.params.requestId;
-  withdrawal.user = event.params.requester;
-  withdrawal.token = event.params.token;
-  withdrawal.isEth = event.params.token.equals(NATIVE_TOKEN);
-  withdrawal.status = "PENDING";
-  withdrawal.timestamp = event.block.timestamp;
-  withdrawal.blockNumber = event.block.number;
-  withdrawal.transactionHash = event.transaction.hash;
-
-  // Link to user
-  let user = getOrCreateUser(event.params.requester, event.block.timestamp);
-  withdrawal.userEntity = user.id;
-
-  // Link to token + per-token counters
+  // Per-token counters
   let token = getOrCreateToken(event.params.token, event.block.timestamp);
-  withdrawal.tokenEntity = token.id;
   token.totalWithdrawals = token.totalWithdrawals + 1;
   token.lastUpdatedAt = event.block.timestamp;
   token.save();
 
-  // Update user stats
-  user.totalWithdrawals = user.totalWithdrawals + 1;
-  user.save();
-
-  // Update global stats
+  // Global stats
   let stats = getGlobalStats();
   stats.totalWithdrawals = stats.totalWithdrawals + 1;
   stats.lastUpdatedAt = event.block.timestamp;
   stats.save();
-
-  withdrawal.save();
 }
 
 /**
  * Handler: Withdrawal Executed
  * Event: WithdrawalExecuted(uint256 indexed requestId, address recipient, uint256 amount)
  * Amount becomes cleartext at execution (Gateway decryption callback).
+ *
+ * PRIVACY (stealth exits v2): the request event is anonymous, so the entity
+ * is created HERE, keyed on the (pseudo-random) requestId, with the public
+ * payout recipient as `user`. The token is read back from the on-chain
+ * request struct (public storage).
  */
 export function handleWithdrawalExecuted(event: WithdrawalExecuted): void {
   let id = event.params.requestId.toString();
   let withdrawal = Withdrawal.load(id);
 
   if (!withdrawal) {
-    // Shouldn't happen in normal flow (request always precedes execution)
+    // Normal flow now: first indexed sight of this request
     withdrawal = new Withdrawal(id);
     withdrawal.requestId = event.params.requestId;
     withdrawal.user = event.params.recipient;
@@ -153,6 +140,20 @@ export function handleWithdrawalExecuted(event: WithdrawalExecuted): void {
       event.block.timestamp
     ).id;
     withdrawal.status = "PENDING"; // Updated below
+
+    // Recover the token from public storage (the anonymous request event
+    // no longer lets us pre-populate it)
+    let vault = NoctisVaultV2.bind(event.address);
+    let reqResult = vault.try_getWithdrawalRequest(event.params.requestId);
+    if (!reqResult.reverted) {
+      let tokenAddress = reqResult.value.token;
+      withdrawal.token = tokenAddress;
+      withdrawal.isEth = tokenAddress.equals(NATIVE_TOKEN);
+      withdrawal.tokenEntity = getOrCreateToken(
+        tokenAddress,
+        event.block.timestamp
+      ).id;
+    }
   }
 
   withdrawal.status = "COMPLETED";
@@ -182,8 +183,9 @@ export function handleWithdrawalExecuted(event: WithdrawalExecuted): void {
   }
 
   // Update user stats - add withdrawn amounts (legacy names: ETH = native,
-  // USDT = ERC20 stable)
+  // USDT = ERC20 stable). `user` here is the payout recipient.
   let user = getOrCreateUser(event.params.recipient, event.block.timestamp);
+  user.totalWithdrawals = user.totalWithdrawals + 1;
   if (withdrawal.amountFormatted !== null) {
     let withdrawnAmount = withdrawal.amountFormatted as BigDecimal;
     if (isNative) {

@@ -238,13 +238,16 @@ async function fetchOnChainWithdrawals(
   symbolFor: (address: string | undefined | null) => string,
   decimalsFor: (address: string | undefined | null) => number
 ): Promise<Activity[]> {
-  const counter = (await publicClient.readContract({
+  // PRIVACY (stealth exits v2): requestIds are pseudo-random and the request
+  // event is anonymous — enumerate this wallet's ids via the scoped getter.
+  const myIds = (await publicClient.readContract({
     address: vaultAddress,
     abi: NoctisVaultABI,
-    functionName: "withdrawalCounter",
-  })) as bigint;
+    functionName: "getMyWithdrawalRequestIds",
+    account: userAddress,
+  })) as bigint[];
 
-  if (counter === 0n) return [];
+  if (myIds.length === 0) return [];
 
   const latest = await publicClient.getBlockNumber();
   const fromBlock =
@@ -275,16 +278,16 @@ async function fetchOnChainWithdrawals(
   }
 
   const found: Activity[] = [];
-  const maxScan = Math.min(Number(counter), 100);
-  const user = userAddress.toLowerCase();
+  // Most recent first, capped at 100
+  const scanIds = myIds.slice(-100).reverse();
 
-  for (let id = maxScan; id >= 1; id--) {
+  for (const id of scanIds) {
     // V2: getWithdrawalRequest returns the WithdrawalRequest struct (named fields)
     const request = (await publicClient.readContract({
       address: vaultAddress,
       abi: NoctisVaultABI,
       functionName: "getWithdrawalRequest",
-      args: [BigInt(id)],
+      args: [id],
     })) as {
       requestId: bigint;
       requester: string;
@@ -296,9 +299,6 @@ async function fetchOnChainWithdrawals(
 
     const requestId = BigInt(request.requestId ?? 0);
     if (requestId === 0n) continue;
-
-    const requester = String(request.requester ?? "").toLowerCase();
-    if (requester !== user) continue;
 
     const executed = Boolean(request.executed);
     const gatewayRequested = Boolean(request.decryptionRequested);
