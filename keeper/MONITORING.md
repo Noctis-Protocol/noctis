@@ -18,9 +18,36 @@ optional infrastructure degrade to `skipped` instead of alerting.
 | `contracts-paused` | 60s | `NoctisExchange.paused()` or `NoctisVault.paused()` returns true (skips per-contract if the getter is missing) | critical |
 | `subgraph-lag` | 120s | `_meta.hasIndexingErrors`, or chain head − subgraph block > `SUBGRAPH_LAG_BLOCKS` (50) | warn |
 | `stuck-orders` | 300s | Subgraph `orders` with `status: PENDING` older than `STUCK_ORDER_MAX_AGE_MIN` (30 min); a pending order with `swapRequested` counts as mid-execution (skips if the query is unavailable) | warn |
+| `relayer-gas-policy` | 120s | Relayer 24h gas budget ≥ `GAS_BUDGET_WARN_PCT` (80%) consumed — critical when exhausted (relayed creations refused). Reads `GET /api/relay/policyStats`; skips if unreachable (downtime belongs to `relayer-health`) | warn/critical |
 
 Contract addresses, the relayer EOA and the subgraph URL default to the SSOT
 file `noctis-protocol/deployments/sepolia.json`; env vars override.
+
+## Relayer economic anti-grief policy
+
+The gas-in-kind refund is only collected at settlement, so a relayed order
+that is created then cancelled (or never executed) is pure gas loss for the
+relayer. `src/relay-policy.ts` bounds that exposure entirely off-chain —
+nothing new is revealed on-chain, so the privacy model is untouched:
+
+1. **In-flight cap** — max `RELAY_MAX_INFLIGHT_PER_VAULT` (2) relayed orders
+   per vaultId that have not reached a terminal state. HTTP 429 on refusal.
+2. **Settle-ratio throttle** — once a vault has `RELAY_RATIO_MIN_SAMPLE` (5)
+   terminal relayed orders, a settled ratio below `RELAY_MIN_SETTLE_RATIO`
+   (50%) refuses relaying for `RELAY_THROTTLE_COOLDOWN_MS` (6h), then grants
+   a fresh window. Throttled users can always trade via the direct
+   (self-paid) path.
+3. **Rolling 24h gas budget** — `RELAY_DAILY_GAS_BUDGET_ETH` (0.2 ETH) of
+   actual receipts across all relayed txs; when exhausted, new creations and
+   cancels return HTTP 503 until spend rolls out of the window. Executions
+   (which collect the refund) are never blocked.
+
+Order lifecycle is tracked from relay endpoints plus the `OrderFilledSimple`
+/ `OrderCancelled` events seen by the cleanup loop; in-flight orders older
+than `RELAY_INFLIGHT_TTL_MS` (2h) count as wasted. State persists to
+`logs/relay-policy.json`. Aggregate stats (counts and totals only — never
+vaultIds or orderIds) are exposed at `GET /api/relay/policyStats` and inside
+`GET /api/relay/health?deep=1` under `policy`.
 
 ## Alerting
 
@@ -101,9 +128,12 @@ for the complete annotated list. Key variables:
 
 ## Tests
 
-Unit tests cover the alert dedup/cooldown/recovery/persistence logic using
-node's built-in test runner:
+Unit tests cover the alert dedup/cooldown/recovery/persistence logic and the
+relayer anti-grief policy (in-flight cap, throttle, gas budget, persistence)
+using node's built-in test runner:
 
 ```bash
-npm run test:monitor
+npm test              # everything
+npm run test:monitor  # alerts only
+npm run test:policy   # relay policy only
 ```

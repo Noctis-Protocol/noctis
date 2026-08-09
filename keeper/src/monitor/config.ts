@@ -36,6 +36,8 @@ export interface MonitorConfig {
   subgraphLagBlocks: number;
   stuckOrderMaxAgeMin: number;
   chainStallMs: number;
+  /** Alert when the relayer's rolling 24h gas budget is this % consumed. */
+  gasBudgetWarnPct: number;
 
   // Per-check intervals (ms)
   intervals: {
@@ -45,6 +47,7 @@ export interface MonitorConfig {
     paused: number;
     subgraph: number;
     stuckOrders: number;
+    gasPolicy: number;
   };
 
   // Alerting
@@ -84,6 +87,7 @@ export function loadConfig(): MonitorConfig {
     subgraphLagBlocks: intEnv('SUBGRAPH_LAG_BLOCKS', 50),
     stuckOrderMaxAgeMin: intEnv('STUCK_ORDER_MAX_AGE_MIN', 30),
     chainStallMs: intEnv('CHAIN_STALL_MS', 5 * 60 * 1000),
+    gasBudgetWarnPct: intEnv('GAS_BUDGET_WARN_PCT', 80),
 
     intervals: {
       relayerHealth: intEnv('CHECK_HEALTH_INTERVAL_MS', 30_000),
@@ -92,6 +96,7 @@ export function loadConfig(): MonitorConfig {
       paused: intEnv('CHECK_PAUSED_INTERVAL_MS', 60_000),
       subgraph: intEnv('CHECK_SUBGRAPH_INTERVAL_MS', 120_000),
       stuckOrders: intEnv('CHECK_ORDERS_INTERVAL_MS', 300_000),
+      gasPolicy: intEnv('CHECK_GAS_POLICY_INTERVAL_MS', 120_000),
     },
 
     alertWebhookUrl: process.env.ALERT_WEBHOOK_URL || process.env.DISCORD_WEBHOOK_URL || '',

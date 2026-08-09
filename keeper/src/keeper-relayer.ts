@@ -25,6 +25,7 @@ import * as dotenv from 'dotenv';
 import * as fs from 'fs';
 import * as path from 'path';
 import { loadPrivateKey } from './loadPrivateKey';
+import { RelayPolicy, loadPolicyConfigFromEnv } from './relay-policy';
 
 dotenv.config();
 
@@ -286,6 +287,9 @@ class KeeperRelayerService {
   private isRunning = false;
   private lastProcessedBlock = 0;
   private app: express.Application;
+  // Economic anti-grief policy: gas refunds are only collected at settlement,
+  // so relayed create/cancel loops are bounded off-chain (privacy-neutral).
+  private policy: RelayPolicy;
 
   constructor() {
     if (!CONFIG.privateKey) {
@@ -299,6 +303,9 @@ class KeeperRelayerService {
     this.wallet = new Wallet(CONFIG.privateKey, this.provider);
     this.vault = new Contract(CONFIG.vaultAddress, VAULT_ABI, this.wallet);
     this.exchange = new Contract(CONFIG.exchangeAddress, EXCHANGE_ABI, this.wallet);
+    this.policy = new RelayPolicy(
+      loadPolicyConfigFromEnv(path.join(__dirname, '..', 'logs'))
+    );
 
     // Express server — Phase A: CORS allowlist + body cap + rate limit
     this.app = express();
@@ -388,8 +395,14 @@ class KeeperRelayerService {
       }
 
       base.status = failures.length === 0 ? 'ok' : 'degraded';
-      const body = { ...base, checks, failures };
+      const body = { ...base, checks, failures, policy: this.policy.stats() };
       return res.status(failures.length === 0 ? 200 : 503).json(body);
+    });
+
+    // Aggregate anti-grief policy stats (no vaultIds/orderIds — privacy-safe).
+    // Consumed by the ops monitor to alert on budget burn / low settle ratio.
+    this.app.get('/api/relay/policyStats', (_req, res) => {
+      res.json({ ...this.policy.stats(), ts: new Date().toISOString() });
     });
 
     // Gas refund quote: suggested flat gas-in-kind refund (wei) for one relayed swap.
@@ -431,6 +444,21 @@ class KeeperRelayerService {
 
         if (!validateDeadlineOrReject(deadline, res)) return;
 
+        // Economic policy: in-flight cap, settle-ratio throttle, gas budget
+        let vaultKey: string;
+        try {
+          vaultKey = BigInt(vaultId).toString();
+        } catch {
+          return res.status(400).json({ error: 'Invalid vaultId' });
+        }
+        const decision = this.policy.checkCreate(vaultKey);
+        if (!decision.allowed) {
+          console.warn(`[POLICY] createOrder refused: ${decision.reason}`);
+          return res
+            .status(decision.httpStatus || 429)
+            .json({ error: decision.hint, reason: decision.reason });
+        }
+
         // Gas-in-kind refund: default 0 (no refund) if the client omits it
         const refundWei = BigInt(gasRefundWei || '0');
 
@@ -470,7 +498,8 @@ class KeeperRelayerService {
         );
 
         const receipt = await tx.wait();
-        
+        this.recordGas(receipt);
+
         // Extract orderId from OrderCreated event
         let orderId: string | null = null;
         for (const log of receipt.logs) {
@@ -482,6 +511,7 @@ class KeeperRelayerService {
           } catch { /* skip non-matching logs */ }
         }
 
+        if (orderId) this.policy.noteCreated(vaultKey, orderId);
         console.log(`[RELAY] Order created: orderId=${orderId}, tx=${tx.hash}`);
         res.json({ orderId, txHash: tx.hash });
       } catch (error: any) {
@@ -521,6 +551,7 @@ class KeeperRelayerService {
 
         const tx = await this.exchange.requestSwapExecutionViaRelayer(orderId, { gasLimit: CONFIG.gasLimit });
         const receipt = await tx.wait();
+        this.recordGas(receipt);
 
         // Extract handles from SwapDecryptionReady event
         let handles: string[] = [];
@@ -583,6 +614,10 @@ class KeeperRelayerService {
         );
 
         const receipt = await tx.wait();
+        this.recordGas(receipt);
+        // Terminal for policy purposes: SELL settles here (refund skimmed);
+        // BUY refund is skimmed in the user-paid finalizeBuySwap.
+        this.policy.noteSettled(String(orderId));
         // BUY: this call only prepares USDT sufficiency; UI must call finalizeBuySwap as the user
         let buySufficiencyHandle: string | undefined;
         let usdtNeeded: string | undefined;
@@ -638,10 +673,22 @@ class KeeperRelayerService {
 
         if (!consumeNonceOrReject(vaultId, nonce, res)) return;
 
+        // Budget gate only — a cancel restores locked funds, so it stays
+        // allowed per-vault, but it burns unrecoverable relayer gas.
+        const decision = this.policy.checkCancel();
+        if (!decision.allowed) {
+          console.warn(`[POLICY] cancelOrder refused: ${decision.reason}`);
+          return res
+            .status(decision.httpStatus || 503)
+            .json({ error: decision.hint, reason: decision.reason });
+        }
+
         console.log(`[RELAY] cancelOrder: orderId=${orderId}`);
 
         const tx = await this.exchange.cancelOrderViaRelayer(orderId, { gasLimit: CONFIG.gasLimit });
-        await tx.wait();
+        const receipt = await tx.wait();
+        this.recordGas(receipt);
+        this.policy.noteWasted(String(orderId));
 
         console.log(`[RELAY] Order cancelled: orderId=${orderId}, tx=${tx.hash}`);
         res.json({ txHash: tx.hash });
@@ -676,8 +723,18 @@ class KeeperRelayerService {
 
         if (!consumeNonceOrReject(vaultId, nonce, res)) return;
 
+        const decision = this.policy.checkCancel();
+        if (!decision.allowed) {
+          console.warn(`[POLICY] cancelSwap refused: ${decision.reason}`);
+          return res
+            .status(decision.httpStatus || 503)
+            .json({ error: decision.hint, reason: decision.reason });
+        }
+
         const tx = await this.exchange.cancelSwapExecutionViaRelayer(orderId, { gasLimit: CONFIG.gasLimit });
-        await tx.wait();
+        const receipt = await tx.wait();
+        this.recordGas(receipt);
+        // Order returns to pending after a cancelled execution — not terminal.
 
         console.log(`[RELAY] Swap cancelled: orderId=${orderId}, tx=${tx.hash}`);
         res.json({ txHash: tx.hash });
@@ -747,6 +804,7 @@ class KeeperRelayerService {
       console.log(`   POST /api/relay/cancelOrder`);
       console.log(`   POST /api/relay/cancelSwap`);
       console.log(`   GET  /api/relay/health`);
+      console.log(`   GET  /api/relay/policyStats`);
       console.log('');
     });
 
@@ -806,17 +864,40 @@ class KeeperRelayerService {
         console.log(`[${this.ts()}] 🔓 Swap Request #${orderId} - decrypting...`);
       }
 
-      // Monitor completed swaps
+      // Monitor completed swaps — also settle policy accounting for orders
+      // that reached settlement outside the relay endpoints (e.g. BUY
+      // finalizeBuySwap paid by the user).
       const filledEvents = await this.exchange.queryFilter('OrderFilledSimple', fromBlock, toBlock);
       for (const event of filledEvents) {
         if (!(event instanceof ethers.EventLog)) continue;
         const { orderId } = event.args;
+        this.policy.noteSettled(orderId.toString());
         console.log(`[${this.ts()}] ✅ Order #${orderId} filled`);
+      }
+
+      // Cancellations settle policy accounting as wasted gas (covers direct,
+      // self-paid cancels of orders that we relayed at creation).
+      const cancelledEvents = await this.exchange.queryFilter('OrderCancelled', fromBlock, toBlock);
+      for (const event of cancelledEvents) {
+        if (!(event instanceof ethers.EventLog)) continue;
+        const { orderId } = event.args;
+        this.policy.noteWasted(orderId.toString());
       }
     } catch (error: any) {
       if (!error.message?.includes('not a function')) {
         console.error('Exchange event processing error:', error.message?.slice(0, 50));
       }
+    }
+  }
+
+  /** Record the actual gas fee burned by a relayed transaction. */
+  private recordGas(receipt: ethers.TransactionReceipt | null): void {
+    if (!receipt) return;
+    try {
+      const price = receipt.gasPrice ?? 0n;
+      this.policy.noteGasSpent(receipt.gasUsed * price);
+    } catch {
+      // Accounting must never break relaying.
     }
   }
 

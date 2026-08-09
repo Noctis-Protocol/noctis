@@ -321,5 +321,61 @@ export function buildChecks(cfg: MonitorConfig): CheckDef[] {
     },
   };
 
-  return [relayerHealth, rpcHead, relayerBalance, contractsPaused, subgraphLag, stuckOrders];
+  // ── 7. Relayer gas budget / anti-grief policy ─────────────────────────
+  // The relayer only recovers gas at settlement (gas-in-kind refund), so a
+  // high wasted ratio or a burning budget means someone is grief-spending
+  // the float. Stats are aggregate-only — no vaultIds/orderIds.
+  const policyUrl = cfg.relayerHealthUrl.replace(/\/health$/, '/policyStats');
+  const gasPolicy: CheckDef = {
+    name: 'relayer-gas-policy',
+    intervalMs: cfg.intervals.gasPolicy,
+    run: async () => {
+      try {
+        const { status, json } = await fetchJson(policyUrl);
+        if (status === 404) {
+          return {
+            ok: true,
+            skipped: true,
+            severity: 'warn',
+            summary: 'policyStats endpoint not available — skipped',
+            details: { url: redactUrl(policyUrl) },
+          };
+        }
+        if (status !== 200) throw new Error(`HTTP ${status}`);
+        const usedPct = Number(json.budgetUsedPct ?? 0);
+        const exhausted = Boolean(json.budgetExhausted);
+        const failures: string[] = [];
+        if (exhausted) failures.push('gas budget EXHAUSTED — relayed creations refused');
+        else if (usedPct >= cfg.gasBudgetWarnPct)
+          failures.push(`gas budget ${usedPct}% consumed (warn at ${cfg.gasBudgetWarnPct}%)`);
+        return {
+          ok: failures.length === 0,
+          severity: exhausted ? 'critical' : 'warn',
+          summary:
+            failures.length > 0
+              ? `relayer gas policy: ${failures.join(', ')}`
+              : `gas budget ${usedPct}% used, settle ratio ${json.settleRatio ?? 'n/a'}`,
+          details: {
+            budgetUsedPct: usedPct,
+            gasSpent24hWei: json.gasSpent24hWei,
+            dailyGasBudgetWei: json.dailyGasBudgetWei,
+            settleRatio: json.settleRatio,
+            inflightTotal: json.inflightTotal,
+            throttledVaults: json.throttledVaults,
+          },
+        };
+      } catch (e: any) {
+        // Reachability alerts belong to relayer-health; skip instead of duplicating.
+        return {
+          ok: true,
+          skipped: true,
+          severity: 'warn',
+          summary: 'policyStats unreachable — skipped (relayer-health covers downtime)',
+          details: { url: redactUrl(policyUrl), error: e.message || String(e) },
+        };
+      }
+    },
+  };
+
+  return [relayerHealth, rpcHead, relayerBalance, contractsPaused, subgraphLag, stuckOrders, gasPolicy];
 }
