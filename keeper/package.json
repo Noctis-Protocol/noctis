@@ -10,11 +10,14 @@
     "start:relayer": "tsx src/keeper-relayer.ts",
     "dev": "tsx src/keeper-relayer.ts",
     "clean": "rimraf dist",
-    "test": "echo \"No unit tests yet\"",
+    "test": "tsx --test src/monitor/alerts.test.ts src/relay-policy.test.ts",
+    "test:policy": "tsx --test src/relay-policy.test.ts",
     "check-vault": "tsx src/check-vault.ts",
     "add-keeper": "tsx src/add-keeper.ts",
-    "monitor": "tsx src/ops-monitor.ts",
-    "monitor:ping": "tsx src/ops-monitor.ts --ping",
+    "monitor": "tsx src/monitor/index.ts",
+    "monitor:ping": "tsx src/monitor/index.ts --ping",
+    "monitor:legacy": "tsx src/ops-monitor.ts",
+    "test:monitor": "tsx --test src/monitor/alerts.test.ts",
     "keystore:create": "tsx src/create-keystore.ts"
   },
   "dependencies": {
