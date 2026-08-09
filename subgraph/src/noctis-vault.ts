@@ -1,203 +1,203 @@
 /**
- * NoctisVault Event Handlers
- * 
+ * NoctisVaultV2 Event Handlers (multi-token vault, native ETH = address(0))
+ *
  * Processes vault events:
- * - ETHDeposited: User deposits ETH into vault
- * - USDTDeposited: User deposits USDT into vault
- * - WithdrawalRequested: User requests withdrawal (encrypted)
- * - WithdrawalExecuted: Keeper completes withdrawal
- * - WithdrawalCancelled: User or system cancels withdrawal
+ * - Deposited: token-aware deposit (amount omitted by event for ERC20;
+ *   ETH amount recovered from msg.value which is public anyway)
+ * - WithdrawalRequested / Executed / Cancelled / ExecutionFailed: lifecycle
+ * - TokenConfigured: token registry (decimals fetched from tokenConfigs)
+ *
+ * PRIVACY: never index anything beyond what events expose. Encrypted
+ * balances and amounts stay encrypted; only cleartext event params are used.
  */
 
-import { Deposit, Withdrawal } from "../generated/schema";
+import { BigDecimal, BigInt } from "@graphprotocol/graph-ts";
+import { Deposit, Withdrawal, Token } from "../generated/schema";
 import {
-  ETHDeposited,
-  USDTDeposited,
+  NoctisVaultV2,
+  Deposited,
   WithdrawalRequested,
   WithdrawalExecuted,
-  WithdrawalCancelled
-} from "../generated/NoctisVault/NoctisVault";
-import { BigDecimal, BigInt } from "@graphprotocol/graph-ts";
-import { 
-  getOrCreateUser, 
-  getGlobalStats, 
+  WithdrawalCancelled,
+  WithdrawalExecutionFailed,
+  TokenConfigured
+} from "../generated/NoctisVaultV2/NoctisVaultV2";
+import {
+  getOrCreateUser,
+  getOrCreateToken,
+  getGlobalStats,
   convertToDecimal,
   ETH_DECIMALS,
-  USDT_DECIMALS
+  NATIVE_TOKEN,
+  ZERO_BI
 } from "./utils";
 
 /**
- * Handler: ETH Deposit
- * Triggered when user deposits ETH into vault
+ * Handler: Deposit (token-aware)
+ * Event: Deposited(address indexed token, address user)
+ *
+ * The event intentionally omits the amount. For native ETH the deposit tx
+ * carries the amount as msg.value (public on-chain), so it is recovered from
+ * the transaction. For ERC20 tokens the amount stays 0 until Transfer-based
+ * enrichment is wired.
  */
-export function handleETHDeposit(event: ETHDeposited): void {
-  // Create unique ID: txHash-logIndex
+export function handleDeposited(event: Deposited): void {
   let id = event.transaction.hash.toHexString() + "-" + event.logIndex.toString();
   let deposit = new Deposit(id);
-  
-  // Fill deposit data
-  // Privacy: vault event omits amount — use msg.value from the deposit tx
-  deposit.depositor = event.params.user;  // Parameter name is 'user' in ABI
-  deposit.token = "ETH";
-  deposit.amount = event.transaction.value;
-  deposit.amountFormatted = convertToDecimal(event.transaction.value, ETH_DECIMALS);
-  deposit.timestamp = event.block.timestamp;
-  deposit.blockNumber = event.block.number;
-  deposit.transactionHash = event.transaction.hash;
-  
-  // Link to user
-  let user = getOrCreateUser(event.params.user, event.block.timestamp);
-  deposit.user = user.id;
-  
-  // Update user stats
-  user.totalDeposits = user.totalDeposits + 1;
-  user.totalDepositedETH = user.totalDepositedETH.plus(deposit.amountFormatted);
-  user.netBalanceETH = user.totalDepositedETH.minus(user.totalWithdrawnETH);
-  user.save();
-  
-  // Update global stats
-  let stats = getGlobalStats();
-  stats.totalDeposits = stats.totalDeposits + 1;
-  stats.totalDepositedETH = stats.totalDepositedETH.plus(deposit.amountFormatted);
-  stats.lastUpdatedAt = event.block.timestamp;
-  stats.save();
-  
-  // Save deposit
-  deposit.save();
-}
 
-/**
- * Handler: USDT Deposit
- * Triggered when user deposits USDT into vault
- */
-export function handleUSDTDeposit(event: USDTDeposited): void {
-  // Create unique ID: txHash-logIndex
-  let id = event.transaction.hash.toHexString() + "-" + event.logIndex.toString();
-  let deposit = new Deposit(id);
-  
-  // Fill deposit data (USDT has 6 decimals, not 18)
-  // Privacy: vault event omits amount — indexers should join ERC20 Transfer;
-  // store 0 here until Transfer-based enrichment is wired.
-  deposit.depositor = event.params.user;  // Parameter name is 'user' in ABI
-  deposit.token = "USDT";
-  deposit.amount = BigInt.fromI32(0);
-  deposit.amountFormatted = convertToDecimal(BigInt.fromI32(0), USDT_DECIMALS);
+  let isNative = event.params.token.equals(NATIVE_TOKEN);
+  let amount = isNative ? event.transaction.value : ZERO_BI;
+
+  deposit.depositor = event.params.user;
+  deposit.token = event.params.token;
+  deposit.amount = amount;
+  deposit.amountFormatted = isNative
+    ? convertToDecimal(amount, ETH_DECIMALS)
+    : BigDecimal.fromString("0");
   deposit.timestamp = event.block.timestamp;
   deposit.blockNumber = event.block.number;
   deposit.transactionHash = event.transaction.hash;
-  
+
   // Link to user
   let user = getOrCreateUser(event.params.user, event.block.timestamp);
   deposit.user = user.id;
-  
-  // Update user stats
+
+  // Link to token + per-token counters
+  let token = getOrCreateToken(event.params.token, event.block.timestamp);
+  deposit.tokenEntity = token.id;
+  token.totalDeposits = token.totalDeposits + 1;
+  token.lastUpdatedAt = event.block.timestamp;
+  token.save();
+
+  // Update user stats (legacy field names: ETH = native, USDT = ERC20)
   user.totalDeposits = user.totalDeposits + 1;
-  user.totalDepositedUSDT = user.totalDepositedUSDT.plus(deposit.amountFormatted);
-  user.netBalanceUSDT = user.totalDepositedUSDT.minus(user.totalWithdrawnUSDT);
+  if (isNative) {
+    user.totalDepositedETH = user.totalDepositedETH.plus(deposit.amountFormatted);
+    user.netBalanceETH = user.totalDepositedETH.minus(user.totalWithdrawnETH);
+  }
   user.save();
-  
+
   // Update global stats
   let stats = getGlobalStats();
   stats.totalDeposits = stats.totalDeposits + 1;
-  stats.totalDepositedUSDT = stats.totalDepositedUSDT.plus(deposit.amountFormatted);
+  if (isNative) {
+    stats.totalDepositedETH = stats.totalDepositedETH.plus(deposit.amountFormatted);
+  }
   stats.lastUpdatedAt = event.block.timestamp;
   stats.save();
-  
-  // Save deposit
+
   deposit.save();
 }
 
 /**
  * Handler: Withdrawal Requested
- * Triggered when user requests withdrawal (amounts are encrypted)
- * Event signature: WithdrawalRequested(indexed uint256,address,bool,uint256)
+ * Event: WithdrawalRequested(uint256 indexed requestId, address requester, address token, uint256 timestamp)
+ * Amounts are encrypted at request time; only known after execution.
  */
 export function handleWithdrawalRequested(event: WithdrawalRequested): void {
-  // Create unique ID: requestId
   let id = event.params.requestId.toString();
   let withdrawal = new Withdrawal(id);
-  
-  // Fill withdrawal data
+
   withdrawal.requestId = event.params.requestId;
-  withdrawal.user = event.params.requester;  // Parameter name is 'requester' in ABI
-  withdrawal.isEth = event.params.isEth;     // New parameter: ETH or USDT
+  withdrawal.user = event.params.requester;
+  withdrawal.token = event.params.token;
+  withdrawal.isEth = event.params.token.equals(NATIVE_TOKEN);
   withdrawal.status = "PENDING";
   withdrawal.timestamp = event.block.timestamp;
   withdrawal.blockNumber = event.block.number;
   withdrawal.transactionHash = event.transaction.hash;
-  
+
   // Link to user
   let user = getOrCreateUser(event.params.requester, event.block.timestamp);
   withdrawal.userEntity = user.id;
-  
+
+  // Link to token + per-token counters
+  let token = getOrCreateToken(event.params.token, event.block.timestamp);
+  withdrawal.tokenEntity = token.id;
+  token.totalWithdrawals = token.totalWithdrawals + 1;
+  token.lastUpdatedAt = event.block.timestamp;
+  token.save();
+
   // Update user stats
   user.totalWithdrawals = user.totalWithdrawals + 1;
   user.save();
-  
+
   // Update global stats
   let stats = getGlobalStats();
   stats.totalWithdrawals = stats.totalWithdrawals + 1;
   stats.lastUpdatedAt = event.block.timestamp;
   stats.save();
-  
-  // Save withdrawal
+
   withdrawal.save();
 }
 
 /**
  * Handler: Withdrawal Executed
- * Triggered when keeper completes withdrawal via Gateway callback
- * Updates withdrawal with amount and deducts from user totals
+ * Event: WithdrawalExecuted(uint256 indexed requestId, address recipient, uint256 amount)
+ * Amount becomes cleartext at execution (Gateway decryption callback).
  */
 export function handleWithdrawalExecuted(event: WithdrawalExecuted): void {
-  // Load withdrawal by requestId
   let id = event.params.requestId.toString();
   let withdrawal = Withdrawal.load(id);
-  
+
   if (!withdrawal) {
-    // Withdrawal not found, create placeholder (shouldn't happen in normal flow)
+    // Shouldn't happen in normal flow (request always precedes execution)
     withdrawal = new Withdrawal(id);
     withdrawal.requestId = event.params.requestId;
-    withdrawal.user = event.params.recipient; // Use recipient as user
+    withdrawal.user = event.params.recipient;
     withdrawal.timestamp = event.block.timestamp;
     withdrawal.blockNumber = event.block.number;
     withdrawal.transactionHash = event.transaction.hash;
-    withdrawal.userEntity = event.params.recipient.toHexString();
-    withdrawal.status = "PENDING"; // Will be updated below
+    withdrawal.userEntity = getOrCreateUser(
+      event.params.recipient,
+      event.block.timestamp
+    ).id;
+    withdrawal.status = "PENDING"; // Updated below
   }
-  
-  // Update withdrawal with amount and status
+
   withdrawal.status = "COMPLETED";
   withdrawal.amount = event.params.amount;
   withdrawal.completedAt = event.block.timestamp;
   withdrawal.completedTxHash = event.transaction.hash;
-  
-  // Determine token type and format amount
-  let isEth = withdrawal.isEth != null ? (withdrawal.isEth as boolean) : true; // Default to ETH if not set
-  withdrawal.token = isEth ? "ETH" : "USDT";
-  withdrawal.amountFormatted = convertToDecimal(
-    event.params.amount,
-    isEth ? ETH_DECIMALS : USDT_DECIMALS
-  );
-  
-  // Update user stats - SUBTRACT withdrawn amounts
-  let user = getOrCreateUser(event.params.recipient, event.block.timestamp);
-  
-  // amountFormatted is now guaranteed to be non-null after assignment above
-  let withdrawnAmount = withdrawal.amountFormatted as BigDecimal;
-  
-  if (isEth) {
-    user.totalWithdrawnETH = user.totalWithdrawnETH.plus(withdrawnAmount);
-    user.netBalanceETH = user.totalDepositedETH.minus(user.totalWithdrawnETH);
+
+  // Format amount using per-token decimals (18 for native ETH, otherwise
+  // from the Token entity populated by TokenConfigured).
+  // NOTE: generated getters collapse null to false/0, so decimals == 0 is
+  // treated as "unknown" (no real registered token has 0 decimals).
+  let isNative = withdrawal.isEth;
+  let decimals = -1;
+  if (isNative) {
+    decimals = ETH_DECIMALS;
   } else {
-    user.totalWithdrawnUSDT = user.totalWithdrawnUSDT.plus(withdrawnAmount);
-    user.netBalanceUSDT = user.totalDepositedUSDT.minus(user.totalWithdrawnUSDT);
+    let tokenId = withdrawal.tokenEntity;
+    if (tokenId != null) {
+      let token = Token.load(tokenId!);
+      if (token != null && token.decimals > 0) {
+        decimals = token.decimals;
+      }
+    }
+  }
+  if (decimals >= 0) {
+    withdrawal.amountFormatted = convertToDecimal(event.params.amount, decimals);
+  }
+
+  // Update user stats - add withdrawn amounts (legacy names: ETH = native,
+  // USDT = ERC20 stable)
+  let user = getOrCreateUser(event.params.recipient, event.block.timestamp);
+  if (withdrawal.amountFormatted !== null) {
+    let withdrawnAmount = withdrawal.amountFormatted as BigDecimal;
+    if (isNative) {
+      user.totalWithdrawnETH = user.totalWithdrawnETH.plus(withdrawnAmount);
+      user.netBalanceETH = user.totalDepositedETH.minus(user.totalWithdrawnETH);
+    } else {
+      user.totalWithdrawnUSDT = user.totalWithdrawnUSDT.plus(withdrawnAmount);
+      user.netBalanceUSDT = user.totalDepositedUSDT.minus(user.totalWithdrawnUSDT);
+    }
   }
   user.save();
-  
-  // Save withdrawal
+
   withdrawal.save();
-  
+
   // Update global stats
   let stats = getGlobalStats();
   stats.lastUpdatedAt = event.block.timestamp;
@@ -206,35 +206,76 @@ export function handleWithdrawalExecuted(event: WithdrawalExecuted): void {
 
 /**
  * Handler: Withdrawal Cancelled
- * Triggered when user or system cancels withdrawal
+ * Event: WithdrawalCancelled(uint256 indexed requestId, address requester)
  */
 export function handleWithdrawalCancelled(event: WithdrawalCancelled): void {
-  // Load withdrawal by requestId
   let id = event.params.requestId.toString();
   let withdrawal = Withdrawal.load(id);
-  
+
   if (!withdrawal) {
-    // Withdrawal not found, create placeholder (shouldn't happen)
+    // Shouldn't happen in normal flow
     withdrawal = new Withdrawal(id);
     withdrawal.requestId = event.params.requestId;
     withdrawal.user = event.params.requester;
-    withdrawal.status = "CANCELLED";
     withdrawal.timestamp = event.block.timestamp;
     withdrawal.blockNumber = event.block.number;
     withdrawal.transactionHash = event.transaction.hash;
-    withdrawal.userEntity = event.params.requester.toHexString();
+    withdrawal.userEntity = getOrCreateUser(
+      event.params.requester,
+      event.block.timestamp
+    ).id;
   }
-  
-  // Update withdrawal status
+
   withdrawal.status = "CANCELLED";
   withdrawal.cancelledAt = event.block.timestamp;
   withdrawal.cancelledTxHash = event.transaction.hash;
-  
-  // Save withdrawal
   withdrawal.save();
-  
+
   // Update global stats
   let stats = getGlobalStats();
   stats.lastUpdatedAt = event.block.timestamp;
   stats.save();
+}
+
+/**
+ * Handler: Withdrawal Execution Failed
+ * Event: WithdrawalExecutionFailed(uint256 indexed requestId)
+ * Emitted when the decryption callback could not complete the transfer.
+ */
+export function handleWithdrawalExecutionFailed(
+  event: WithdrawalExecutionFailed
+): void {
+  let withdrawal = Withdrawal.load(event.params.requestId.toString());
+
+  if (withdrawal != null) {
+    withdrawal.status = "FAILED";
+    withdrawal.failedAt = event.block.timestamp;
+    withdrawal.failedTxHash = event.transaction.hash;
+    withdrawal.save();
+
+    let stats = getGlobalStats();
+    stats.lastUpdatedAt = event.block.timestamp;
+    stats.save();
+  }
+}
+
+/**
+ * Handler: Token Configured (vault registry)
+ * Event: TokenConfigured(address indexed token, bool enabled)
+ * Also fetches the token decimals from the vault's tokenConfigs mapping
+ * (decimals are passed explicitly at configuration and cached on-chain).
+ */
+export function handleTokenConfigured(event: TokenConfigured): void {
+  let token = getOrCreateToken(event.params.token, event.block.timestamp);
+  token.vaultEnabled = event.params.enabled;
+  token.lastUpdatedAt = event.block.timestamp;
+
+  // Read cached decimals from the vault (view call; tolerates reverts)
+  let vault = NoctisVaultV2.bind(event.address);
+  let configResult = vault.try_tokenConfigs(event.params.token);
+  if (!configResult.reverted) {
+    token.decimals = configResult.value.getDecimals();
+  }
+
+  token.save();
 }

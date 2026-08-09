@@ -63,17 +63,17 @@ export class Deposit extends Entity {
     this.set("depositor", Value.fromBytes(value));
   }
 
-  get token(): string {
+  get token(): Bytes {
     let value = this.get("token");
     if (!value || value.kind == ValueKind.NULL) {
       throw new Error("Cannot return null for a required field.");
     } else {
-      return value.toString();
+      return value.toBytes();
     }
   }
 
-  set token(value: string) {
-    this.set("token", Value.fromString(value));
+  set token(value: Bytes) {
+    this.set("token", Value.fromBytes(value));
   }
 
   get amount(): BigInt {
@@ -153,6 +153,19 @@ export class Deposit extends Entity {
   set user(value: string) {
     this.set("user", Value.fromString(value));
   }
+
+  get tokenEntity(): string {
+    let value = this.get("tokenEntity");
+    if (!value || value.kind == ValueKind.NULL) {
+      throw new Error("Cannot return null for a required field.");
+    } else {
+      return value.toString();
+    }
+  }
+
+  set tokenEntity(value: string) {
+    this.set("tokenEntity", Value.fromString(value));
+  }
 }
 
 export class Withdrawal extends Entity {
@@ -220,21 +233,34 @@ export class Withdrawal extends Entity {
     this.set("user", Value.fromBytes(value));
   }
 
-  get token(): string | null {
+  get token(): Bytes | null {
     let value = this.get("token");
     if (!value || value.kind == ValueKind.NULL) {
       return null;
     } else {
-      return value.toString();
+      return value.toBytes();
     }
   }
 
-  set token(value: string | null) {
+  set token(value: Bytes | null) {
     if (!value) {
       this.unset("token");
     } else {
-      this.set("token", Value.fromString(<string>value));
+      this.set("token", Value.fromBytes(<Bytes>value));
     }
+  }
+
+  get isEth(): boolean {
+    let value = this.get("isEth");
+    if (!value || value.kind == ValueKind.NULL) {
+      return false;
+    } else {
+      return value.toBoolean();
+    }
+  }
+
+  set isEth(value: boolean) {
+    this.set("isEth", Value.fromBoolean(value));
   }
 
   get amount(): BigInt | null {
@@ -282,19 +308,6 @@ export class Withdrawal extends Entity {
 
   set status(value: string) {
     this.set("status", Value.fromString(value));
-  }
-
-  get isEth(): boolean {
-    let value = this.get("isEth");
-    if (!value || value.kind == ValueKind.NULL) {
-      return false;
-    } else {
-      return value.toBoolean();
-    }
-  }
-
-  set isEth(value: boolean) {
-    this.set("isEth", Value.fromBoolean(value));
   }
 
   get timestamp(): BigInt {
@@ -404,6 +417,40 @@ export class Withdrawal extends Entity {
     }
   }
 
+  get failedAt(): BigInt | null {
+    let value = this.get("failedAt");
+    if (!value || value.kind == ValueKind.NULL) {
+      return null;
+    } else {
+      return value.toBigInt();
+    }
+  }
+
+  set failedAt(value: BigInt | null) {
+    if (!value) {
+      this.unset("failedAt");
+    } else {
+      this.set("failedAt", Value.fromBigInt(<BigInt>value));
+    }
+  }
+
+  get failedTxHash(): Bytes | null {
+    let value = this.get("failedTxHash");
+    if (!value || value.kind == ValueKind.NULL) {
+      return null;
+    } else {
+      return value.toBytes();
+    }
+  }
+
+  set failedTxHash(value: Bytes | null) {
+    if (!value) {
+      this.unset("failedTxHash");
+    } else {
+      this.set("failedTxHash", Value.fromBytes(<Bytes>value));
+    }
+  }
+
   get userEntity(): string {
     let value = this.get("userEntity");
     if (!value || value.kind == ValueKind.NULL) {
@@ -415,6 +462,23 @@ export class Withdrawal extends Entity {
 
   set userEntity(value: string) {
     this.set("userEntity", Value.fromString(value));
+  }
+
+  get tokenEntity(): string | null {
+    let value = this.get("tokenEntity");
+    if (!value || value.kind == ValueKind.NULL) {
+      return null;
+    } else {
+      return value.toString();
+    }
+  }
+
+  set tokenEntity(value: string | null) {
+    if (!value) {
+      this.unset("tokenEntity");
+    } else {
+      this.set("tokenEntity", Value.fromString(<string>value));
+    }
   }
 }
 
@@ -470,6 +534,19 @@ export class Order extends Entity {
     this.set("orderId", Value.fromBigInt(value));
   }
 
+  get baseToken(): Bytes {
+    let value = this.get("baseToken");
+    if (!value || value.kind == ValueKind.NULL) {
+      throw new Error("Cannot return null for a required field.");
+    } else {
+      return value.toBytes();
+    }
+  }
+
+  set baseToken(value: Bytes) {
+    this.set("baseToken", Value.fromBytes(value));
+  }
+
   get isBuy(): boolean {
     let value = this.get("isBuy");
     if (!value || value.kind == ValueKind.NULL) {
@@ -481,19 +558,6 @@ export class Order extends Entity {
 
   set isBuy(value: boolean) {
     this.set("isBuy", Value.fromBoolean(value));
-  }
-
-  get orderType(): string {
-    let value = this.get("orderType");
-    if (!value || value.kind == ValueKind.NULL) {
-      throw new Error("Cannot return null for a required field.");
-    } else {
-      return value.toString();
-    }
-  }
-
-  set orderType(value: string) {
-    this.set("orderType", Value.fromString(value));
   }
 
   get status(): string {
@@ -661,6 +725,223 @@ export class Order extends Entity {
     } else {
       this.set("cancelledTxHash", Value.fromBytes(<Bytes>value));
     }
+  }
+
+  get tokenEntity(): string {
+    let value = this.get("tokenEntity");
+    if (!value || value.kind == ValueKind.NULL) {
+      throw new Error("Cannot return null for a required field.");
+    } else {
+      return value.toString();
+    }
+  }
+
+  set tokenEntity(value: string) {
+    this.set("tokenEntity", Value.fromString(value));
+  }
+}
+
+export class Token extends Entity {
+  constructor(id: string) {
+    super();
+    this.set("id", Value.fromString(id));
+  }
+
+  save(): void {
+    let id = this.get("id");
+    assert(id != null, "Cannot save Token entity without an ID");
+    if (id) {
+      assert(
+        id.kind == ValueKind.STRING,
+        `Entities of type Token must have an ID of type String but the id '${id.displayData()}' is of type ${id.displayKind()}`,
+      );
+      store.set("Token", id.toString(), this);
+    }
+  }
+
+  static loadInBlock(id: string): Token | null {
+    return changetype<Token | null>(store.get_in_block("Token", id));
+  }
+
+  static load(id: string): Token | null {
+    return changetype<Token | null>(store.get("Token", id));
+  }
+
+  get id(): string {
+    let value = this.get("id");
+    if (!value || value.kind == ValueKind.NULL) {
+      throw new Error("Cannot return null for a required field.");
+    } else {
+      return value.toString();
+    }
+  }
+
+  set id(value: string) {
+    this.set("id", Value.fromString(value));
+  }
+
+  get vaultEnabled(): boolean {
+    let value = this.get("vaultEnabled");
+    if (!value || value.kind == ValueKind.NULL) {
+      return false;
+    } else {
+      return value.toBoolean();
+    }
+  }
+
+  set vaultEnabled(value: boolean) {
+    this.set("vaultEnabled", Value.fromBoolean(value));
+  }
+
+  get tradingEnabled(): boolean {
+    let value = this.get("tradingEnabled");
+    if (!value || value.kind == ValueKind.NULL) {
+      return false;
+    } else {
+      return value.toBoolean();
+    }
+  }
+
+  set tradingEnabled(value: boolean) {
+    this.set("tradingEnabled", Value.fromBoolean(value));
+  }
+
+  get decimals(): i32 {
+    let value = this.get("decimals");
+    if (!value || value.kind == ValueKind.NULL) {
+      return 0;
+    } else {
+      return value.toI32();
+    }
+  }
+
+  set decimals(value: i32) {
+    this.set("decimals", Value.fromI32(value));
+  }
+
+  get totalOrders(): i32 {
+    let value = this.get("totalOrders");
+    if (!value || value.kind == ValueKind.NULL) {
+      return 0;
+    } else {
+      return value.toI32();
+    }
+  }
+
+  set totalOrders(value: i32) {
+    this.set("totalOrders", Value.fromI32(value));
+  }
+
+  get totalDeposits(): i32 {
+    let value = this.get("totalDeposits");
+    if (!value || value.kind == ValueKind.NULL) {
+      return 0;
+    } else {
+      return value.toI32();
+    }
+  }
+
+  set totalDeposits(value: i32) {
+    this.set("totalDeposits", Value.fromI32(value));
+  }
+
+  get totalWithdrawals(): i32 {
+    let value = this.get("totalWithdrawals");
+    if (!value || value.kind == ValueKind.NULL) {
+      return 0;
+    } else {
+      return value.toI32();
+    }
+  }
+
+  set totalWithdrawals(value: i32) {
+    this.set("totalWithdrawals", Value.fromI32(value));
+  }
+
+  get totalFeesCollected(): BigInt {
+    let value = this.get("totalFeesCollected");
+    if (!value || value.kind == ValueKind.NULL) {
+      throw new Error("Cannot return null for a required field.");
+    } else {
+      return value.toBigInt();
+    }
+  }
+
+  set totalFeesCollected(value: BigInt) {
+    this.set("totalFeesCollected", Value.fromBigInt(value));
+  }
+
+  get totalFeeEvents(): i32 {
+    let value = this.get("totalFeeEvents");
+    if (!value || value.kind == ValueKind.NULL) {
+      return 0;
+    } else {
+      return value.toI32();
+    }
+  }
+
+  set totalFeeEvents(value: i32) {
+    this.set("totalFeeEvents", Value.fromI32(value));
+  }
+
+  get totalGasRefundsCollected(): BigInt {
+    let value = this.get("totalGasRefundsCollected");
+    if (!value || value.kind == ValueKind.NULL) {
+      throw new Error("Cannot return null for a required field.");
+    } else {
+      return value.toBigInt();
+    }
+  }
+
+  set totalGasRefundsCollected(value: BigInt) {
+    this.set("totalGasRefundsCollected", Value.fromBigInt(value));
+  }
+
+  get totalGasRefundEvents(): i32 {
+    let value = this.get("totalGasRefundEvents");
+    if (!value || value.kind == ValueKind.NULL) {
+      return 0;
+    } else {
+      return value.toI32();
+    }
+  }
+
+  set totalGasRefundEvents(value: i32) {
+    this.set("totalGasRefundEvents", Value.fromI32(value));
+  }
+
+  get firstSeenAt(): BigInt {
+    let value = this.get("firstSeenAt");
+    if (!value || value.kind == ValueKind.NULL) {
+      throw new Error("Cannot return null for a required field.");
+    } else {
+      return value.toBigInt();
+    }
+  }
+
+  set firstSeenAt(value: BigInt) {
+    this.set("firstSeenAt", Value.fromBigInt(value));
+  }
+
+  get lastUpdatedAt(): BigInt {
+    let value = this.get("lastUpdatedAt");
+    if (!value || value.kind == ValueKind.NULL) {
+      throw new Error("Cannot return null for a required field.");
+    } else {
+      return value.toBigInt();
+    }
+  }
+
+  set lastUpdatedAt(value: BigInt) {
+    this.set("lastUpdatedAt", Value.fromBigInt(value));
+  }
+
+  get orders(): OrderLoader {
+    return new OrderLoader("Token", this.get("id")!.toString(), "orders");
+  }
+
+  get deposits(): DepositLoader {
+    return new DepositLoader("Token", this.get("id")!.toString(), "deposits");
   }
 }
 
@@ -1004,6 +1285,71 @@ export class GlobalStats extends Entity {
     this.set("totalOrdersCancelled", Value.fromI32(value));
   }
 
+  get totalTokens(): i32 {
+    let value = this.get("totalTokens");
+    if (!value || value.kind == ValueKind.NULL) {
+      return 0;
+    } else {
+      return value.toI32();
+    }
+  }
+
+  set totalTokens(value: i32) {
+    this.set("totalTokens", Value.fromI32(value));
+  }
+
+  get totalFeesCollected(): BigInt {
+    let value = this.get("totalFeesCollected");
+    if (!value || value.kind == ValueKind.NULL) {
+      throw new Error("Cannot return null for a required field.");
+    } else {
+      return value.toBigInt();
+    }
+  }
+
+  set totalFeesCollected(value: BigInt) {
+    this.set("totalFeesCollected", Value.fromBigInt(value));
+  }
+
+  get totalFeeEvents(): i32 {
+    let value = this.get("totalFeeEvents");
+    if (!value || value.kind == ValueKind.NULL) {
+      return 0;
+    } else {
+      return value.toI32();
+    }
+  }
+
+  set totalFeeEvents(value: i32) {
+    this.set("totalFeeEvents", Value.fromI32(value));
+  }
+
+  get totalGasRefundsCollected(): BigInt {
+    let value = this.get("totalGasRefundsCollected");
+    if (!value || value.kind == ValueKind.NULL) {
+      throw new Error("Cannot return null for a required field.");
+    } else {
+      return value.toBigInt();
+    }
+  }
+
+  set totalGasRefundsCollected(value: BigInt) {
+    this.set("totalGasRefundsCollected", Value.fromBigInt(value));
+  }
+
+  get totalGasRefundEvents(): i32 {
+    let value = this.get("totalGasRefundEvents");
+    if (!value || value.kind == ValueKind.NULL) {
+      return 0;
+    } else {
+      return value.toI32();
+    }
+  }
+
+  set totalGasRefundEvents(value: i32) {
+    this.set("totalGasRefundEvents", Value.fromI32(value));
+  }
+
   get lastUpdatedAt(): BigInt {
     let value = this.get("lastUpdatedAt");
     if (!value || value.kind == ValueKind.NULL) {
@@ -1015,6 +1361,24 @@ export class GlobalStats extends Entity {
 
   set lastUpdatedAt(value: BigInt) {
     this.set("lastUpdatedAt", Value.fromBigInt(value));
+  }
+}
+
+export class OrderLoader extends Entity {
+  _entity: string;
+  _field: string;
+  _id: string;
+
+  constructor(entity: string, id: string, field: string) {
+    super();
+    this._entity = entity;
+    this._id = id;
+    this._field = field;
+  }
+
+  load(): Order[] {
+    let value = store.loadRelated(this._entity, this._id, this._field);
+    return changetype<Order[]>(value);
   }
 }
 

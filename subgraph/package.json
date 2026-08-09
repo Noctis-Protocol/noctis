@@ -1,11 +1,11 @@
 {
   "name": "noctis-protocol-subgraph",
-  "version": "1.2.0",
-  "description": "The Graph subgraph for Noctis Protocol - FHE-powered dark pool DEX",
+  "version": "2.0.0",
+  "description": "The Graph subgraph for Noctis Protocol V2 - multi-token FHE-powered dark pool DEX",
   "scripts": {
     "codegen": "graph codegen",
     "build": "graph build",
-    "deploy": "graph deploy --studio noctis-protocol",
+    "deploy": "graph deploy --studio noctis-protocol --version-label v2.0.0",
     "create-local": "graph create --node http://localhost:8020/ noctis-protocol",
     "remove-local": "graph remove --node http://localhost:8020/ noctis-protocol",
     "deploy-local": "graph deploy --node http://localhost:8020/ --ipfs http://localhost:5001 noctis-protocol",
