@@ -2,6 +2,10 @@
 /**
  * @file Check NoctisVault status
  * @description Displays current vault configuration: keepers, gateway, pending proposals
+ *
+ * V1 ONLY: NoctisVaultV2 has no keeper set and no legacy gateway getters —
+ * these reads revert against a V2 vault. Use the relayer deep health check
+ * (GET /api/relay/health?deep=1) for V2 status instead.
  * 
  * Usage:
  *   npx ts-node src/check-vault.ts
