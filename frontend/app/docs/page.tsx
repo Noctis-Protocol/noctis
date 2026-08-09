@@ -233,10 +233,10 @@ export default function DocsPage() {
                         </td>
                       </tr>
                       <tr>
-                        <td className="px-5 py-3.5 font-medium text-ink-800">USDC (USDT slot)</td>
+                        <td className="px-5 py-3.5 font-medium text-ink-800">USDC (quote token)</td>
                         <td className="px-5 py-3.5">
-                          <MonoLink href={PILOT.explorerAddress(PILOT.usdt)}>
-                            {short(PILOT.usdt)}
+                          <MonoLink href={PILOT.explorerAddress(PILOT.usdc)}>
+                            {short(PILOT.usdc)}
                           </MonoLink>
                         </td>
                       </tr>

@@ -1,67 +1,68 @@
 /**
- * useNoctisVault Hook
- * 
- * Handles interactions with NoctisVault contract:
- * - Deposit ETH/USDT
- * - Request encrypted withdrawals
- * - Read encrypted balances
- * 
- * Now properly waits for transaction confirmation before showing success.
+ * useNoctisVault Hook (V2 — multi-token)
+ *
+ * Handles interactions with NoctisVaultV2:
+ * - Deposit native ETH (depositETH) or any registered ERC-20 (approve + depositToken)
+ * - Request withdrawals per token (encrypted amount when possible)
+ * - Execute withdrawals via the v0.9 self-relay decrypt flow
+ * - Claim ETH (pull-over-push pattern)
+ *
+ * Native ETH is address(0) on-chain; callers pass a TokenInfo from the registry.
  */
 
 "use client";
 
 import { useCallback, useMemo } from "react";
-import { 
-  useAccount, 
-  useChainId,
+import {
+  useAccount,
   useWriteContract,
   usePublicClient,
 } from "wagmi";
-import { parseEther, formatEther, decodeEventLog } from "viem";
+import { parseEther, decodeEventLog } from "viem";
 import { NoctisVaultABI, ERC20ABI } from "@/lib/contracts/abi";
 import { useContractAddresses } from "@/lib/wagmi";
 import { useTransactionState } from "./useTransactionState";
 import { useFhevm } from "./useFhevm";
+import {
+  parseTokenAmount,
+  formatTokenAmount,
+  type TokenInfo,
+} from "./useTokenRegistry";
 
 interface UseNoctisVaultOptions {
   // Callback called after successful deposit (use for balance refetch)
   onDepositSuccess?: () => void;
   // Balance tracker callback (for local estimation)
-  onDepositTracked?: (amount: number, token: "ETH" | "USDT", txHash: string) => void;
+  onDepositTracked?: (amount: number, token: string, txHash: string) => void;
   // Callback called after successful withdrawal request
   onWithdrawalSuccess?: () => void;
 }
 
 interface UseNoctisVaultReturn {
-  // Deposit functions - return true on success, false on failure
+  /** Deposit native ETH — returns true once confirmed */
   depositETH: (amount: string) => Promise<boolean>;
-  depositUSDT: (amount: bigint) => Promise<boolean>;
-  // Withdrawal function - returns requestId on success, null on failure
-  requestWithdrawal: (recipient: string, amount: string, isEth: boolean) => Promise<bigint | null>;
-  // Execute withdrawal (user-initiated private decryption) - returns true on success
+  /** Deposit a registered ERC-20 (approve + depositToken) — raw units */
+  depositToken: (token: TokenInfo, amount: bigint) => Promise<boolean>;
+  /** Request a withdrawal (self-recipient in V2) — returns requestId */
+  requestWithdrawal: (token: TokenInfo, amount: string) => Promise<bigint | null>;
+  /** Execute withdrawal via self-relay public decrypt — returns true on success */
   executeWithdrawal: (requestId: bigint) => Promise<boolean>;
-  // Cancel pending withdrawal - returns true on success
   cancelWithdrawal: (requestId: bigint) => Promise<boolean>;
-  // Claim ETH after withdrawal completion
   claimETH: () => Promise<boolean>;
-  // State
   isLoading: boolean;
   error: string | null;
 }
 
 export function useNoctisVault(options?: UseNoctisVaultOptions): UseNoctisVaultReturn {
   const { address } = useAccount();
-  const chainId = useChainId();
   const publicClient = usePublicClient();
-  const { state, setPending, setConfirming, setSuccess, setFailed, reset } = useTransactionState();
+  const { state, setPending, setConfirming, setSuccess, setFailed } = useTransactionState();
   const { publicDecryptWithProof, createEncryptedInput, isReady: fhevmReady } = useFhevm();
-  
+
   const contracts = useContractAddresses();
-  
+
   const { writeContractAsync, error: writeError } = useWriteContract();
-  
-  // Parse error message (wagmi v2 pattern)
+
   const errorMessage = useMemo(() => {
     if (!writeError) return null;
     return writeError.message?.slice(0, 100) || "Transaction failed";
@@ -72,7 +73,7 @@ export function useNoctisVault(options?: UseNoctisVaultOptions): UseNoctisVaultR
   const finalizeDeposit = useCallback(
     async (
       hash: `0x${string}`,
-      token: "ETH" | "USDT",
+      tokenSymbol: string,
       amountNumber: number,
       successMessage: string
     ): Promise<boolean> => {
@@ -88,9 +89,9 @@ export function useNoctisVault(options?: UseNoctisVaultOptions): UseNoctisVaultR
       }
 
       setSuccess(successMessage);
-      options?.onDepositTracked?.(amountNumber, token, hash);
+      options?.onDepositTracked?.(amountNumber, tokenSymbol, hash);
       window.dispatchEvent(new CustomEvent("noctis:transaction-success", {
-        detail: { type: "deposit", hash, token },
+        detail: { type: "deposit", hash, token: tokenSymbol },
       }));
 
       if (options?.onDepositSuccess) {
@@ -106,7 +107,7 @@ export function useNoctisVault(options?: UseNoctisVaultOptions): UseNoctisVaultR
     [publicClient, setConfirming, setSuccess, setFailed]
   );
 
-  // Deposit ETH - returns true once the transaction is confirmed on-chain
+  // Deposit native ETH - returns true once the transaction is confirmed on-chain
   const depositETH = useCallback(
     async (amount: string): Promise<boolean> => {
       if (!contracts?.vaultAddress) {
@@ -142,59 +143,59 @@ export function useNoctisVault(options?: UseNoctisVaultOptions): UseNoctisVaultR
     [contracts, publicClient, writeContractAsync, finalizeDeposit, setPending, setFailed]
   );
 
-  // Deposit USDT (requires approval first) - now waits for actual confirmation
-  // Returns true on success, false on failure
-  const depositUSDT = useCallback(
-    async (amount: bigint): Promise<boolean> => {
-      if (!contracts?.vaultAddress || !contracts?.usdtAddress) {
-        setFailed("Contracts not configured for this chain");
+  // Deposit a registered ERC-20 (requires approval first) - waits for confirmation
+  const depositToken = useCallback(
+    async (token: TokenInfo, amount: bigint): Promise<boolean> => {
+      if (!contracts?.vaultAddress) {
+        setFailed("Vault contract not configured for this chain");
         return false;
       }
-
+      if (token.isNative) {
+        setFailed("Use depositETH for native ETH");
+        return false;
+      }
       if (!publicClient) {
         setFailed("No public client available");
         return false;
       }
 
       try {
-        // Step 1: Approve USDT
+        // Step 1: Approve
         setPending(1, 2);
-        
+
         const approveHash = await writeContractAsync({
           abi: ERC20ABI,
-          address: contracts.usdtAddress as `0x${string}`,
+          address: token.address,
           functionName: "approve",
           args: [contracts.vaultAddress as `0x${string}`, amount],
         });
-        
+
         setConfirming(approveHash);
-        
-        // Wait for approval confirmation
-        console.log("⏳ Waiting for approval confirmation:", approveHash);
+
         const approveReceipt = await publicClient.waitForTransactionReceipt({
           hash: approveHash,
           confirmations: 1,
         });
-        
+
         if (approveReceipt.status !== "success") {
           setFailed("Approval transaction reverted");
           return false;
         }
-        
+
         // Step 2: Deposit
         setPending(2, 2);
-        
+
         const depositHash = await writeContractAsync({
           abi: NoctisVaultABI,
           address: contracts.vaultAddress as `0x${string}`,
-          functionName: "depositUSDT",
-          args: [amount],
+          functionName: "depositToken",
+          args: [token.address, amount],
         });
         return await finalizeDeposit(
           depositHash,
-          "USDT",
-          Number(amount) / 1e6, // 6 decimals
-          "Deposited USDT successfully!"
+          token.symbol,
+          Number(formatTokenAmount(amount, token.decimals, Math.min(token.decimals, 8))),
+          `Deposited ${token.symbol} successfully!`
         );
       } catch (err) {
         const message = err instanceof Error ? err.message : "Deposit failed";
@@ -206,33 +207,31 @@ export function useNoctisVault(options?: UseNoctisVaultOptions): UseNoctisVaultR
     [contracts, publicClient, writeContractAsync, finalizeDeposit, setPending, setConfirming, setFailed]
   );
 
-  // Request withdrawal - returns requestId on success, null on failure
-  // PRIVACY-FIRST: Uses client-side encryption so amount and recipient are never visible in TX data
+  // Request withdrawal (self-recipient in V2) - returns requestId or null
+  // PRIVACY-FIRST: encrypts the amount client-side when the FHE relayer is up,
+  // falling back to the plaintext requestWithdrawal(token, amount) path.
   const requestWithdrawal = useCallback(
-    async (recipient: string, amount: string, isEth: boolean): Promise<bigint | null> => {
+    async (token: TokenInfo, amount: string): Promise<bigint | null> => {
       if (!contracts?.vaultAddress) {
         setFailed("Vault contract not configured for this chain");
         return null;
       }
-
       if (!publicClient) {
         setFailed("No public client available");
         return null;
       }
-
       if (!address) {
         setFailed("Wallet not connected");
         return null;
       }
 
-      // Validation
-      if (!recipient || recipient.length !== 42 || !recipient.startsWith("0x")) {
-        setFailed("Invalid recipient address");
-        return null;
-      }
-
       const amountFloat = parseFloat(amount);
       if (isNaN(amountFloat) || amountFloat <= 0) {
+        setFailed("Invalid amount");
+        return null;
+      }
+      const amountBigInt = parseTokenAmount(amount, token.decimals);
+      if (amountBigInt <= 0n) {
         setFailed("Invalid amount");
         return null;
       }
@@ -253,153 +252,127 @@ export function useNoctisVault(options?: UseNoctisVaultOptions): UseNoctisVaultR
         }
 
         setPending(
-          1, 2, 
-          "Encrypting your data...", 
+          1, 2,
+          "Encrypting your data...",
           "🔐 FHE encryption protects your privacy. This takes 60-90 seconds. Please wait..."
-        ); // 2 steps: encrypt + send TX
-        
-        // Convert amount to uint128 format (wei for ETH, 6 decimals for USDT)
-        const amountBigInt = isEth 
-          ? parseEther(amount)
-          : BigInt(Math.floor(amountFloat * 1e6)); // USDT has 6 decimals
+        );
 
-        // PRIVACY-FIRST: Encrypt amount and recipient client-side
-        // This ensures they're never visible in transaction input data or mempool
-        console.log("🔐 Encrypting withdrawal parameters client-side (may take 60-90 seconds)...");
+        const submitAndExtract = async (hash: `0x${string}`): Promise<bigint | null> => {
+          setConfirming(hash);
+          const receipt = await publicClient.waitForTransactionReceipt({ hash, confirmations: 1 });
+          if (receipt.status !== "success") {
+            setFailed("Withdrawal request transaction reverted");
+            return null;
+          }
+
+          // Extract requestId from WithdrawalRequested logs
+          let requestId: bigint | null = null;
+          for (const log of receipt.logs) {
+            try {
+              const decoded = decodeEventLog({
+                abi: NoctisVaultABI,
+                data: log.data,
+                topics: log.topics,
+              });
+              if (decoded.eventName === "WithdrawalRequested") {
+                requestId = (decoded.args as { requestId: bigint }).requestId;
+                break;
+              }
+            } catch {
+              continue;
+            }
+          }
+          // Fallback: first indexed topic
+          if (requestId == null) {
+            for (const log of receipt.logs) {
+              if (log.topics.length > 1 && log.topics[1]) {
+                try {
+                  requestId = BigInt(log.topics[1] as string);
+                  break;
+                } catch { /* continue */ }
+              }
+            }
+          }
+
+          setSuccess(
+            `Withdrawal request #${requestId?.toString() || "pending"} submitted! Click Execute to complete privately.`
+          );
+          window.dispatchEvent(new CustomEvent("noctis:transaction-success", {
+            detail: { type: "withdrawal", hash, token: token.symbol, requestId: requestId?.toString() },
+          }));
+
+          if (options?.onWithdrawalSuccess) {
+            setTimeout(() => {
+              options.onWithdrawalSuccess?.();
+              setTimeout(() => options.onWithdrawalSuccess?.(), 3000);
+            }, 1000);
+          }
+          return requestId;
+        };
+
+        // PRIVACY-FIRST: encrypt the amount client-side (never visible in calldata)
         const encryptedInput = await createEncryptedInput(
           contracts.vaultAddress,
           address
         );
 
         if (!encryptedInput) {
-          // Fallback to legacy method if encryption fails
-          console.warn("⚠️ Client-side encryption not available, using legacy method");
+          // Fallback: plaintext amount path (amount visible in calldata)
+          console.warn("⚠️ Client-side encryption not available, using plaintext requestWithdrawal");
           const hash = await writeContractAsync({
             abi: NoctisVaultABI,
             address: contracts.vaultAddress as `0x${string}`,
-            functionName: "requestEncryptedWithdrawal",
-            args: [recipient as `0x${string}`, amountBigInt, isEth],
+            functionName: "requestWithdrawal",
+            args: [token.address, amountBigInt],
+            gas: 3_000_000n,
           });
-          
-          setConfirming(hash);
-          const receipt = await publicClient.waitForTransactionReceipt({ hash, confirmations: 1 });
-          
-          if (receipt.status === "success") {
-            let requestId: bigint | null = null;
-            for (const log of receipt.logs) {
-              if (log.topics.length > 1 && log.topics[1]) {
-                try {
-                  requestId = BigInt(log.topics[1] as string);
-                  break;
-                } catch (e) { /* Continue */ }
-              }
-            }
-            setSuccess(`Withdrawal request #${requestId?.toString() || "pending"} submitted!`);
-            return requestId;
-          }
-          setFailed("Transaction reverted");
-          return null;
+          return await submitAndExtract(hash);
         }
 
-        // Add values to encrypt
+        // V2 withdrawals are self-recipient: only the amount is encrypted
         encryptedInput.add128(amountBigInt);
-        encryptedInput.addAddress(recipient);
 
-        // Encrypt with ZK proof
-        // Use encryptAsync since encrypt() is synchronous and we need server-side encryption
-        const encryptAsync = (encryptedInput as any).encryptAsync;
+        const encryptAsync = (encryptedInput as unknown as {
+          encryptAsync?: () => Promise<{ handles: string[]; inputProof: string }>;
+        }).encryptAsync;
         if (!encryptAsync) {
           throw new Error("encryptAsync not available on encrypted input builder");
         }
-        
+
         const encrypted = await encryptAsync();
-        console.log("✅ Encryption successful! Handles:", encrypted.handles.length);
 
         setPending(
-          2, 2, 
-          "Sign in wallet", 
+          2, 2,
+          "Sign in wallet",
           "✅ Encryption complete! Please confirm the transaction in your wallet."
-        ); // Step 2: Send TX
+        );
 
-        // Call privacy-first function with encrypted inputs
         const hash = await writeContractAsync({
           abi: NoctisVaultABI,
           address: contracts.vaultAddress as `0x${string}`,
-          functionName: "requestEncryptedWithdrawalPrivate",
+          functionName: "requestWithdrawalPrivate",
           args: [
-            encrypted.handles[0] as `0x${string}`,  // encryptedAmount
-            encrypted.handles[1] as `0x${string}`,  // encryptedRecipient
-            encrypted.inputProof as `0x${string}`,  // ZK proof
-            isEth
+            token.address,
+            encrypted.handles[0] as `0x${string}`, // encryptedAmount (externalEuint128)
+            encrypted.inputProof as `0x${string}`,
           ],
+          gas: 3_000_000n,
         });
-        
-        setConfirming(hash);
-        
-        // Wait for actual transaction confirmation
-        console.log("⏳ Waiting for withdrawal request confirmation:", hash);
-        const receipt = await publicClient.waitForTransactionReceipt({ 
-          hash,
-          confirmations: 1,
-        });
-        
-        if (receipt.status === "success") {
-          console.log("✅ Withdrawal request confirmed:", hash);
-          
-          // Extract requestId from logs
-          let requestId: bigint | null = null;
-          for (const log of receipt.logs) {
-            // WithdrawalRequested event has requestId as first indexed parameter
-            if (log.topics.length > 1 && log.topics[1]) {
-              try {
-                requestId = BigInt(log.topics[1] as string);
-                break;
-              } catch (e) {
-                // Continue searching
-              }
-            }
-          }
-          
-          const token = isEth ? "ETH" : "USDT";
-          setSuccess(`Withdrawal request #${requestId?.toString() || "pending"} submitted! Click Execute to complete privately.`);
-          
-          // Dispatch event for activity feed refresh
-          console.log("📡 Dispatching transaction-success event for withdrawal request");
-          window.dispatchEvent(new CustomEvent("noctis:transaction-success", { 
-            detail: { type: "withdrawal", hash, token, requestId: requestId?.toString() } 
-          }));
-          
-          // Trigger balance refetch callback
-          if (options?.onWithdrawalSuccess) {
-            setTimeout(() => {
-              console.log("🔄 Triggering balance refetch after withdrawal request");
-              options.onWithdrawalSuccess?.();
-              
-              // Try again after 3 seconds
-              setTimeout(() => {
-                options.onWithdrawalSuccess?.();
-              }, 3000);
-            }, 1000);
-          }
-          
-          return requestId;
-        } else {
-          setFailed("Withdrawal request transaction reverted");
-          return null;
-        }
+
+        return await submitAndExtract(hash);
       } catch (err) {
         const message = err instanceof Error ? err.message : "Withdrawal request failed";
         const lower = message.toLowerCase();
-        
-        // Check for specific contract errors (ABI decode or raw selector)
+
         if (
           message.includes("TooManyPendingWithdrawals") ||
-          lower.includes("0xb0053072") ||
           (lower.includes("rpc 0x") && lower.includes("revert"))
         ) {
           setFailed(
             "You already have a pending withdrawal. Click Execute in Activity, or Cancel it first."
           );
+        } else if (message.includes("ExceedsMaximumWithdrawal")) {
+          setFailed(`Amount exceeds the per-request ${token.symbol} withdrawal cap.`);
         } else {
           setFailed(message.slice(0, 120));
         }
@@ -411,15 +384,10 @@ export function useNoctisVault(options?: UseNoctisVaultOptions): UseNoctisVaultR
   );
 
   /**
-   * Execute withdrawal using user-initiated private decryption
-   * 
-   * PRIVACY-FIRST FLOW:
-   * 1. User calls requestWithdrawalExecution() on contract
-   * 2. Contract emits DecryptionReady event with handles
-   * 3. User decrypts using userDecrypt() - ONLY USER SEES VALUES
-   * 4. User calls executeWithdrawalCallback() with cleartexts + proof
-   * 
-   * This ensures no keeper or third party ever sees the decrypted amounts!
+   * Execute withdrawal via the v0.9 self-relay flow:
+   * 1. requestWithdrawalExecution(requestId) → DecryptionReady(handles)
+   * 2. publicDecrypt(handles) via the ZAMA gateway (amount + sufficiency ebool)
+   * 3. executeWithdrawalCallback(requestId, cleartexts, proof)
    */
   const executeWithdrawal = useCallback(
     async (requestId: bigint): Promise<boolean> => {
@@ -427,51 +395,46 @@ export function useNoctisVault(options?: UseNoctisVaultOptions): UseNoctisVaultR
         setFailed("Vault contract not configured for this chain");
         return false;
       }
-
       if (!publicClient) {
         setFailed("No public client available");
         return false;
       }
-
       if (!address) {
         setFailed("Wallet not connected");
         return false;
       }
-
       if (!fhevmReady) {
         setFailed("FHEVM not ready");
         return false;
       }
 
       try {
-        // Step 1: Call requestWithdrawalExecution to mark values for decryption
+        // Step 1: mark the handles publicly decryptable
         setPending(1, 3);
-        console.log("🔐 Step 1/3: Requesting withdrawal execution...");
-        
+
         const execHash = await writeContractAsync({
           abi: NoctisVaultABI,
           address: contracts.vaultAddress as `0x${string}`,
           functionName: "requestWithdrawalExecution",
           args: [requestId],
+          gas: 3_000_000n,
         });
-        
+
         setConfirming(execHash);
-        
-        console.log("⏳ Waiting for requestWithdrawalExecution confirmation:", execHash);
-        const execReceipt = await publicClient.waitForTransactionReceipt({ 
+
+        const execReceipt = await publicClient.waitForTransactionReceipt({
           hash: execHash,
           confirmations: 1,
         });
-        
+
         if (execReceipt.status !== "success") {
           setFailed("Request execution transaction reverted");
           return false;
         }
 
         // Extract handles from DecryptionReady event
-        // The contract emits handles with proper FHE.toBytes32() conversion
         let handles: string[] = [];
-        
+
         for (const log of execReceipt.logs) {
           try {
             const decoded = decodeEventLog({
@@ -479,81 +442,45 @@ export function useNoctisVault(options?: UseNoctisVaultOptions): UseNoctisVaultR
               data: log.data,
               topics: log.topics,
             });
-            
+
             if (decoded.eventName === "DecryptionReady") {
-              // Extract handles directly from event (already properly formatted as bytes32)
-              const eventHandles = (decoded.args as any).handles;
-              handles = eventHandles.map((h: `0x${string}`) => h);
-              console.log("   ✅ Extracted handles from DecryptionReady event:", handles.length);
+              const eventHandles = (decoded.args as unknown as { handles: readonly `0x${string}`[] }).handles;
+              handles = [...eventHandles];
               break;
             }
           } catch {
-            // Not our event, continue
             continue;
           }
         }
 
-        // Fallback: If event parsing failed, read from contract state
+        // Fallback: read handles from contract state
         if (handles.length === 0) {
-          console.log("   ⚠️ Event parsing failed, falling back to contract state...");
-          
           const request = await publicClient.readContract({
             abi: NoctisVaultABI,
             address: contracts.vaultAddress as `0x${string}`,
-            functionName: "withdrawalRequests",
+            functionName: "getWithdrawalRequest",
             args: [requestId],
-          }) as any;
+          }) as { encryptedAmount: `0x${string}`; hasSufficientBalance: `0x${string}` };
 
-          // Convert encrypted handles to hex strings
-          // Struct fields: [0]=requestId, [1]=requester, [2]=plaintextRecipient, [3]=encryptedRecipient,
-          //                [4]=encryptedAmount, [5]=originalBalance, [6]=hasSufficientBalance, [7]=isEth, ...
-          // PRIVACY FIX: We now decrypt hasSufficientBalance (ebool) instead of originalBalance (euint128)
-          const encryptedAmount = request.encryptedAmount ?? request[4];
-          const hasSufficientBalance = request.hasSufficientBalance ?? request[6];
-          
-          console.log("   Raw encryptedAmount:", encryptedAmount);
-          console.log("   Raw hasSufficientBalance:", hasSufficientBalance);
-          
-          // If bytes32, use directly; otherwise format as hex string
-          const amountHandle = typeof encryptedAmount === "string" && encryptedAmount.startsWith("0x")
-            ? encryptedAmount
-            : "0x" + BigInt(encryptedAmount).toString(16).padStart(64, "0");
-          const hasSufficientHandle = typeof hasSufficientBalance === "string" && hasSufficientBalance.startsWith("0x")
-            ? hasSufficientBalance
-            : "0x" + BigInt(hasSufficientBalance).toString(16).padStart(64, "0");
-          handles = [amountHandle, hasSufficientHandle];
-          
-          console.log("   ✅ Got handles from contract state:", handles.length);
+          handles = [request.encryptedAmount, request.hasSufficientBalance];
         }
 
-        console.log("   📦 Handle[0] (amount):", handles[0]?.slice(0, 20) + "...");
-        console.log("   📦 Handle[1] (hasSufficientBalance):", handles[1]?.slice(0, 20) + "...");
-
-        // IMPORTANT: Wait for Gateway to index the makePubliclyDecryptable() call
-        // The Gateway needs time to synchronize ACL changes from the blockchain
-        // Step 2: Decrypt using publicDecrypt (Gateway - returns on-chain verifiable proof)
+        // Step 2: public decrypt via the Gateway (trustless — proof verified on-chain).
+        // The Gateway needs time to index the makePubliclyDecryptable ACL change.
         setPending(2, 3);
-        console.log("🔐 Step 2/3: Decrypting via Gateway (trustless, no keeper needed)...");
-        
-        // Retry logic with increasing delays
+
         let decryptResult = null;
-        const maxRetries = 5;
-        const delays = [15000, 20000, 30000, 45000, 60000]; // 15s, 20s, 30s, 45s, 60s
-        
-        for (let attempt = 0; attempt < maxRetries; attempt++) {
-          console.log(`   ⏳ Waiting ${delays[attempt]/1000}s for Gateway to index ACL... (attempt ${attempt + 1}/${maxRetries})`);
+        const delays = [15000, 20000, 30000, 45000, 60000];
+
+        for (let attempt = 0; attempt < delays.length; attempt++) {
           await new Promise(resolve => setTimeout(resolve, delays[attempt]));
-          
+
           try {
             decryptResult = await publicDecryptWithProof(handles, contracts.vaultAddress);
-            if (decryptResult) {
-              console.log("   ✅ Decryption successful!");
-              break;
-            }
-          } catch (err: any) {
-            const errorMsg = err?.message || "";
-            if (errorMsg.includes("not allowed for public decryption") && attempt < maxRetries - 1) {
-              console.log(`   ⚠️ Gateway not ready yet, retrying...`);
+            if (decryptResult) break;
+          } catch (err: unknown) {
+            const errorMsg = err instanceof Error ? err.message : "";
+            if (errorMsg.includes("not allowed for public decryption") && attempt < delays.length - 1) {
               continue;
             }
             throw err;
@@ -565,20 +492,9 @@ export function useNoctisVault(options?: UseNoctisVaultOptions): UseNoctisVaultR
           return false;
         }
 
-        console.log("   ✅ Decrypted privately!");
-        const amountHandle = handles[0];
-        const hasSufficientHandle = handles[1];
-        const amountValue = decryptResult.clearValues[amountHandle];
-        const amount = typeof amountValue === "bigint" ? amountValue : 0n;
-        console.log("   Amount:", formatEther(amount), "ETH");
-        // PRIVACY FIX: We now get hasSufficientBalance (boolean), not the actual balance
-        const hasSufficient = decryptResult.clearValues[hasSufficientHandle];
-        console.log("   Has sufficient balance:", hasSufficient === true ? "YES ✅" : "NO ❌");
-
-        // Step 3: Call executeWithdrawalCallback with cleartexts + proof
+        // Step 3: callback with proven cleartexts
         setPending(3, 3);
-        console.log("🔐 Step 3/3: Executing withdrawal callback...");
-        
+
         const callbackHash = await writeContractAsync({
           abi: NoctisVaultABI,
           address: contracts.vaultAddress as `0x${string}`,
@@ -589,31 +505,27 @@ export function useNoctisVault(options?: UseNoctisVaultOptions): UseNoctisVaultR
             decryptResult.decryptionProof as `0x${string}`,
           ],
           // FHE.checkSignatures requires significant gas (~1-2M)
-          // Cap at 5M to avoid "gas limit too high" errors from MetaMask
           gas: 5_000_000n,
         });
-        
+
         setConfirming(callbackHash);
-        
-        console.log("⏳ Waiting for callback confirmation:", callbackHash);
-        const callbackReceipt = await publicClient.waitForTransactionReceipt({ 
+
+        const callbackReceipt = await publicClient.waitForTransactionReceipt({
           hash: callbackHash,
           confirmations: 1,
         });
-        
+
         if (callbackReceipt.status === "success") {
-          console.log("✅ Withdrawal executed successfully!");
-          setSuccess("Withdrawal executed! Your funds are ready to claim.");
-          
-          // Dispatch event for balance refresh
-          window.dispatchEvent(new CustomEvent("noctis:transaction-success", { 
-            detail: { type: "withdrawal-executed", hash: callbackHash } 
+          setSuccess("Withdrawal executed! ETH goes to Ready to claim; tokens are sent directly.");
+
+          window.dispatchEvent(new CustomEvent("noctis:transaction-success", {
+            detail: { type: "withdrawal-executed", hash: callbackHash },
           }));
-          
+
           if (options?.onWithdrawalSuccess) {
             setTimeout(() => options.onWithdrawalSuccess?.(), 1000);
           }
-          
+
           return true;
         } else {
           setFailed("Withdrawal callback transaction reverted");
@@ -637,7 +549,6 @@ export function useNoctisVault(options?: UseNoctisVaultOptions): UseNoctisVaultR
         setFailed("Vault contract not configured for this chain");
         return false;
       }
-
       if (!publicClient) {
         setFailed("No public client available");
         return false;
@@ -645,7 +556,7 @@ export function useNoctisVault(options?: UseNoctisVaultOptions): UseNoctisVaultR
 
       try {
         setPending(1, 1);
-        
+
         const hash = await writeContractAsync({
           abi: NoctisVaultABI,
           address: contracts.vaultAddress as `0x${string}`,
@@ -654,24 +565,21 @@ export function useNoctisVault(options?: UseNoctisVaultOptions): UseNoctisVaultR
           // FHE operations require more gas
           gas: 3_000_000n,
         });
-        
+
         setConfirming(hash);
-        
-        console.log("⏳ Waiting for cancel confirmation:", hash);
-        const receipt = await publicClient.waitForTransactionReceipt({ 
+
+        const receipt = await publicClient.waitForTransactionReceipt({
           hash,
           confirmations: 1,
         });
-        
+
         if (receipt.status === "success") {
-          console.log("✅ Withdrawal cancelled:", hash);
           setSuccess("Withdrawal cancelled. Funds returned to your vault balance.");
-          
-          // Dispatch event for balance refresh
-          window.dispatchEvent(new CustomEvent("noctis:transaction-success", { 
-            detail: { type: "withdrawal-cancelled", hash, requestId: requestId.toString() } 
+
+          window.dispatchEvent(new CustomEvent("noctis:transaction-success", {
+            detail: { type: "withdrawal-cancelled", hash, requestId: requestId.toString() },
           }));
-          
+
           return true;
         } else {
           setFailed("Cancel transaction reverted");
@@ -679,8 +587,7 @@ export function useNoctisVault(options?: UseNoctisVaultOptions): UseNoctisVaultR
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : "Cancel failed";
-        
-        // Check for specific contract errors
+
         if (message.includes("CancellationTooEarly") || message.includes("reverted")) {
           setFailed("Cannot cancel yet. Wait 1 hour after requesting execution, or cancel before clicking Execute.");
         } else {
@@ -693,14 +600,13 @@ export function useNoctisVault(options?: UseNoctisVaultOptions): UseNoctisVaultR
     [contracts, publicClient, writeContractAsync, setPending, setConfirming, setSuccess, setFailed]
   );
 
-  // Claim ETH after withdrawal - returns true on success
+  // Claim ETH after withdrawal (pull pattern) - returns true on success
   const claimETH = useCallback(
     async (): Promise<boolean> => {
       if (!contracts?.vaultAddress) {
         setFailed("Vault contract not configured for this chain");
         return false;
       }
-
       if (!publicClient) {
         setFailed("No public client available");
         return false;
@@ -708,30 +614,27 @@ export function useNoctisVault(options?: UseNoctisVaultOptions): UseNoctisVaultR
 
       try {
         setPending(1, 1);
-        
+
         const hash = await writeContractAsync({
           abi: NoctisVaultABI,
           address: contracts.vaultAddress as `0x${string}`,
           functionName: "claimETH",
         });
-        
+
         setConfirming(hash);
-        
-        console.log("⏳ Waiting for claim confirmation:", hash);
-        const receipt = await publicClient.waitForTransactionReceipt({ 
+
+        const receipt = await publicClient.waitForTransactionReceipt({
           hash,
           confirmations: 1,
         });
-        
+
         if (receipt.status === "success") {
-          console.log("✅ ETH claimed successfully:", hash);
           setSuccess("ETH claimed successfully!");
-          
-          // Dispatch event for balance refresh
-          window.dispatchEvent(new CustomEvent("noctis:transaction-success", { 
-            detail: { type: "claim", hash, token: "ETH" } 
+
+          window.dispatchEvent(new CustomEvent("noctis:transaction-success", {
+            detail: { type: "claim", hash, token: "ETH" },
           }));
-          
+
           return true;
         } else {
           setFailed("Claim transaction reverted");
@@ -749,7 +652,7 @@ export function useNoctisVault(options?: UseNoctisVaultOptions): UseNoctisVaultR
 
   return {
     depositETH,
-    depositUSDT,
+    depositToken,
     requestWithdrawal,
     executeWithdrawal,
     cancelWithdrawal,

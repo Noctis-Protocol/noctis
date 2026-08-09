@@ -1,22 +1,23 @@
 /**
- * useTradeHistoryDecryption — Approach B
+ * useTradeHistoryDecryption — Approach B (V2 — multi-token)
  *
  * Privately decrypt order size / fill handles via FHE userDecrypt.
- * Effective fill price (USDC per ETH) derived from both legs when available.
+ * Effective fill price (USDC per base token) derived from both legs when available.
  */
 
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAccount, usePublicClient } from "wagmi";
-import { formatEther, formatUnits, parseAbiItem, type Address } from "viem";
+import { formatUnits, parseAbiItem, type Address } from "viem";
 import { useContractAddresses } from "@/lib/wagmi";
-import { NoctisExchangeABI } from "@/lib/contracts/abi";
+import { NoctisExchangeABI, NATIVE_TOKEN } from "@/lib/contracts/abi";
 import { USDC } from "@/lib/uniswapSepolia";
 import { useFhevm } from "./useFhevm";
+import { useTokenRegistry } from "./useTokenRegistry";
 
-const CACHE_KEY = "noctis_trade_history_v2";
-/** Current Exchange start (SSOT sepolia.json subgraph.exchangeStartBlock). */
+const CACHE_KEY = "noctis_trade_history_v3";
+/** Lower bound for V2 log scans (V1 exchange start — V2 is later). */
 const EXCHANGE_START_BLOCK = 11446917n;
 
 const ORDER_FILLED_PRIVATE = parseAbiItem(
@@ -29,15 +30,20 @@ const ZERO =
 export interface RevealedTrade {
   orderId: string;
   isBuy: boolean;
-  amountEthWei: string;
-  formattedEth: string;
+  /** Base token of the pair (address(0) = native ETH) */
+  baseToken: string;
+  baseSymbol: string;
+  baseDecimals: number;
+  /** Order size in raw base units */
+  amountBaseRaw: string;
+  formattedBase: string;
   amountOutRaw?: string;
   formattedOut?: string;
-  outToken?: "ETH" | "USDC";
+  outSymbol?: string;
   /** USDC spent on BUY fills (from public Transfer in fill tx) */
   usdcInRaw?: string;
   formattedUsdcIn?: string;
-  /** Effective USDC per 1 ETH */
+  /** Effective USDC per 1 base token */
   priceUsd?: number;
   formattedPrice?: string;
   displayAmount: string;
@@ -74,8 +80,8 @@ function saveCache(exchange: string, user: string, data: CacheFile) {
   }
 }
 
-function formatEthAmount(wei: bigint): string {
-  const s = formatEther(wei);
+function formatBaseAmount(raw: bigint, decimals: number): string {
+  const s = formatUnits(raw, decimals);
   const n = Number(s);
   if (!Number.isFinite(n)) return s;
   if (n >= 1) return n.toFixed(4);
@@ -98,9 +104,10 @@ function formatPrice(price: number): string {
 
 function buildDisplay(trade: {
   isBuy: boolean;
-  formattedEth: string;
+  baseSymbol: string;
+  formattedBase: string;
   formattedOut?: string;
-  outToken?: "ETH" | "USDC";
+  outSymbol?: string;
   formattedUsdcIn?: string;
   priceUsd?: number;
 }): Pick<
@@ -116,7 +123,7 @@ function buildDisplay(trade: {
   if (trade.isBuy) {
     if (trade.formattedUsdcIn && trade.formattedOut) {
       return {
-        displayAmount: `${trade.formattedUsdcIn} USDC → ${trade.formattedOut} ETH`,
+        displayAmount: `${trade.formattedUsdcIn} USDC → ${trade.formattedOut} ${trade.baseSymbol}`,
         displayToken: "",
         formattedPrice,
         priceLabel,
@@ -125,31 +132,31 @@ function buildDisplay(trade: {
     if (trade.formattedOut) {
       return {
         displayAmount: trade.formattedOut,
-        displayToken: "ETH",
+        displayToken: trade.baseSymbol,
         formattedPrice,
         priceLabel,
       };
     }
     return {
-      displayAmount: trade.formattedEth,
-      displayToken: "ETH",
+      displayAmount: trade.formattedBase,
+      displayToken: trade.baseSymbol,
       formattedPrice,
       priceLabel,
     };
   }
 
   // SELL
-  if (trade.formattedOut && trade.outToken === "USDC") {
+  if (trade.formattedOut && trade.outSymbol === "USDC") {
     return {
-      displayAmount: `${trade.formattedEth} ETH → ${trade.formattedOut} USDC`,
+      displayAmount: `${trade.formattedBase} ${trade.baseSymbol} → ${trade.formattedOut} USDC`,
       displayToken: "",
       formattedPrice,
       priceLabel,
     };
   }
   return {
-    displayAmount: trade.formattedEth,
-    displayToken: "ETH",
+    displayAmount: trade.formattedBase,
+    displayToken: trade.baseSymbol,
     formattedPrice,
     priceLabel,
   };
@@ -159,16 +166,17 @@ function buildDisplay(trade: {
 function enrichCached(row: RevealedTrade): RevealedTrade {
   if (row.priceUsd && row.priceLabel) return row;
   let priceUsd = row.priceUsd;
+  const baseDecimals = row.baseDecimals ?? 18;
   try {
-    if (!priceUsd && !row.isBuy && row.amountOutRaw && row.amountEthWei) {
-      const eth = Number(formatEther(BigInt(row.amountEthWei)));
+    if (!priceUsd && !row.isBuy && row.amountOutRaw && row.amountBaseRaw) {
+      const base = Number(formatUnits(BigInt(row.amountBaseRaw), baseDecimals));
       const usdc = Number(formatUnits(BigInt(row.amountOutRaw), 6));
-      if (eth > 0 && usdc > 0) priceUsd = usdc / eth;
+      if (base > 0 && usdc > 0) priceUsd = usdc / base;
     }
     if (!priceUsd && row.isBuy && row.usdcInRaw && row.amountOutRaw) {
-      const eth = Number(formatEther(BigInt(row.amountOutRaw)));
+      const base = Number(formatUnits(BigInt(row.amountOutRaw), baseDecimals));
       const usdc = Number(formatUnits(BigInt(row.usdcInRaw), 6));
-      if (eth > 0 && usdc > 0) priceUsd = usdc / eth;
+      if (base > 0 && usdc > 0) priceUsd = usdc / base;
     }
   } catch {
     /* keep */
@@ -232,6 +240,7 @@ export function useTradeHistoryDecryption(
   const publicClient = usePublicClient();
   const contracts = useContractAddresses();
   const { reencrypt, isReady: isFhevmReady } = useFhevm();
+  const { symbolFor, decimalsFor } = useTokenRegistry();
 
   const [revealed, setRevealed] = useState<Record<string, RevealedTrade>>({});
   const [isDecrypting, setIsDecrypting] = useState(false);
@@ -333,20 +342,25 @@ export function useTradeHistoryDecryption(
             args: [BigInt(orderId)],
             account: address,
           })) as {
-            encryptedAmountETH: `0x${string}`;
+            baseToken: `0x${string}`;
+            encryptedAmountBase: `0x${string}`;
             isBuy: boolean;
           };
 
-          const inHandle = order.encryptedAmountETH;
+          const inHandle = order.encryptedAmountBase;
           if (!inHandle || inHandle === ZERO) {
             failures.push(`#${orderId}: empty amount handle`);
             continue;
           }
 
-          // Reuse cached ETH decrypt if present
-          let amountEth: bigint;
-          if (revealed[orderId]?.amountEthWei) {
-            amountEth = BigInt(revealed[orderId].amountEthWei);
+          const baseToken = String(order.baseToken ?? NATIVE_TOKEN).toLowerCase();
+          const baseSymbol = symbolFor(baseToken);
+          const baseDecimals = decimalsFor(baseToken);
+
+          // Reuse cached base-amount decrypt if present
+          let amountBase: bigint;
+          if (next[orderId]?.amountBaseRaw) {
+            amountBase = BigInt(next[orderId].amountBaseRaw);
           } else {
             const clear = await reencrypt(
               BigInt(inHandle),
@@ -357,22 +371,21 @@ export function useTradeHistoryDecryption(
               failures.push(`#${orderId}: decrypt failed`);
               continue;
             }
-            amountEth = clear;
+            amountBase = clear;
           }
 
           const isBuy = Boolean(order.isBuy);
-          const formattedEth = formatEthAmount(amountEth);
+          const formattedBase = formatBaseAmount(amountBase, baseDecimals);
           let amountOutRaw: string | undefined =
-            revealed[orderId]?.amountOutRaw;
+            next[orderId]?.amountOutRaw;
           let formattedOut: string | undefined =
-            revealed[orderId]?.formattedOut;
-          let outToken: "ETH" | "USDC" | undefined =
-            revealed[orderId]?.outToken;
-          let usdcInRaw: string | undefined = revealed[orderId]?.usdcInRaw;
+            next[orderId]?.formattedOut;
+          let outSymbol: string | undefined = next[orderId]?.outSymbol;
+          let usdcInRaw: string | undefined = next[orderId]?.usdcInRaw;
           let formattedUsdcIn: string | undefined =
-            revealed[orderId]?.formattedUsdcIn;
-          let fillTxHash: string | undefined = revealed[orderId]?.fillTxHash;
-          let priceUsd: number | undefined = revealed[orderId]?.priceUsd;
+            next[orderId]?.formattedUsdcIn;
+          let fillTxHash: string | undefined = next[orderId]?.fillTxHash;
+          let priceUsd: number | undefined = next[orderId]?.priceUsd;
 
           const fillMeta = outByOrder.get(orderId);
           if (fillMeta) fillTxHash = fillMeta.txHash;
@@ -387,10 +400,10 @@ export function useTradeHistoryDecryption(
               if (outClear !== null) {
                 amountOutRaw = outClear.toString();
                 if (isBuy) {
-                  outToken = "ETH";
-                  formattedOut = formatEthAmount(outClear);
+                  outSymbol = baseSymbol;
+                  formattedOut = formatBaseAmount(outClear, baseDecimals);
                 } else {
-                  outToken = "USDC";
+                  outSymbol = "USDC";
                   formattedOut = formatUsdcAmount(outClear);
                 }
               }
@@ -412,16 +425,16 @@ export function useTradeHistoryDecryption(
             }
           }
 
-          // Effective price
+          // Effective price (USDC per 1 base token)
           try {
             if (!isBuy && amountOutRaw) {
-              const eth = Number(formatEther(amountEth));
+              const base = Number(formatUnits(amountBase, baseDecimals));
               const usdc = Number(formatUnits(BigInt(amountOutRaw), 6));
-              if (eth > 0 && usdc > 0) priceUsd = usdc / eth;
+              if (base > 0 && usdc > 0) priceUsd = usdc / base;
             } else if (isBuy && usdcInRaw && amountOutRaw) {
-              const eth = Number(formatEther(BigInt(amountOutRaw)));
+              const base = Number(formatUnits(BigInt(amountOutRaw), baseDecimals));
               const usdc = Number(formatUnits(BigInt(usdcInRaw), 6));
-              if (eth > 0 && usdc > 0) priceUsd = usdc / eth;
+              if (base > 0 && usdc > 0) priceUsd = usdc / base;
             }
           } catch {
             /* leave undefined */
@@ -429,9 +442,10 @@ export function useTradeHistoryDecryption(
 
           const built = buildDisplay({
             isBuy,
-            formattedEth,
+            baseSymbol,
+            formattedBase,
             formattedOut,
-            outToken,
+            outSymbol,
             formattedUsdcIn,
             priceUsd,
           });
@@ -439,11 +453,14 @@ export function useTradeHistoryDecryption(
           next[orderId] = {
             orderId,
             isBuy,
-            amountEthWei: amountEth.toString(),
-            formattedEth,
+            baseToken,
+            baseSymbol,
+            baseDecimals,
+            amountBaseRaw: amountBase.toString(),
+            formattedBase,
             amountOutRaw,
             formattedOut,
-            outToken,
+            outSymbol,
             usdcInRaw,
             formattedUsdcIn,
             priceUsd,
@@ -482,6 +499,8 @@ export function useTradeHistoryDecryption(
       isFhevmReady,
       reencrypt,
       revealed,
+      symbolFor,
+      decimalsFor,
     ]
   );
 

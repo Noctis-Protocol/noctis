@@ -11,13 +11,21 @@ export const env = {
   // Sepolia (live)
   vaultAddress: process.env.NEXT_PUBLIC_VAULT_ADDRESS || "",
   exchangeAddress: process.env.NEXT_PUBLIC_EXCHANGE_ADDRESS || "",
-  usdtAddress: process.env.NEXT_PUBLIC_USDT_ADDRESS || "",
+  // USDC quote token. NEXT_PUBLIC_USDT_ADDRESS is the historical env var name
+  // (kept for backward compatibility); NEXT_PUBLIC_USDC_ADDRESS wins when set.
+  usdcAddress:
+    process.env.NEXT_PUBLIC_USDC_ADDRESS ||
+    process.env.NEXT_PUBLIC_USDT_ADDRESS ||
+    "",
   subgraphUrl: process.env.NEXT_PUBLIC_SUBGRAPH_URL || "",
   relayerUrl: process.env.NEXT_PUBLIC_RELAYER_URL || "http://localhost:3001",
   // Mainnet (Phase D — leave empty until deployments/mainnet.json)
   vaultAddressMainnet: process.env.NEXT_PUBLIC_VAULT_ADDRESS_MAINNET || "",
   exchangeAddressMainnet: process.env.NEXT_PUBLIC_EXCHANGE_ADDRESS_MAINNET || "",
-  usdtAddressMainnet: process.env.NEXT_PUBLIC_USDT_ADDRESS_MAINNET || "",
+  usdcAddressMainnet:
+    process.env.NEXT_PUBLIC_USDC_ADDRESS_MAINNET ||
+    process.env.NEXT_PUBLIC_USDT_ADDRESS_MAINNET ||
+    "",
   subgraphUrlMainnet: process.env.NEXT_PUBLIC_SUBGRAPH_URL_MAINNET || "",
   relayerUrlMainnet: process.env.NEXT_PUBLIC_RELAYER_URL_MAINNET || "",
 } as const;
@@ -25,7 +33,7 @@ export const env = {
 export type ContractAddresses = {
   vaultAddress: string;
   exchangeAddress: string;
-  usdtAddress: string;
+  usdcAddress: string;
   subgraphUrl: string;
   relayerUrl: string;
   configured: boolean;
@@ -35,7 +43,7 @@ export function validateEnv(): { valid: boolean; missing: string[] } {
   const missing: string[] = [];
   if (!env.vaultAddress) missing.push("NEXT_PUBLIC_VAULT_ADDRESS");
   if (!env.exchangeAddress) missing.push("NEXT_PUBLIC_EXCHANGE_ADDRESS");
-  if (!env.usdtAddress) missing.push("NEXT_PUBLIC_USDT_ADDRESS");
+  if (!env.usdcAddress) missing.push("NEXT_PUBLIC_USDT_ADDRESS (USDC address)");
   return { valid: missing.length === 0, missing };
 }
 
@@ -43,7 +51,7 @@ export function requireConfig() {
   const { valid, missing } = validateEnv();
   if (!valid) {
     console.error(
-      `Missing Sepolia configuration: ${missing.join(", ")}. SSOT: noctis-protocol/deployments/sepolia.json`
+      `Missing Sepolia configuration: ${missing.join(", ")}. SSOT: noctis-protocol/deployments/sepolia.v2.json`
     );
     throw new Error("Sepolia configuration incomplete");
   }
@@ -54,14 +62,14 @@ export function getContractAddressesForChain(chainId: number | undefined): Contr
   if (chainId === mainnet.id) {
     const vaultAddress = env.vaultAddressMainnet;
     const exchangeAddress = env.exchangeAddressMainnet;
-    const usdtAddress = env.usdtAddressMainnet;
+    const usdcAddress = env.usdcAddressMainnet;
     return {
       vaultAddress,
       exchangeAddress,
-      usdtAddress,
+      usdcAddress,
       subgraphUrl: env.subgraphUrlMainnet,
       relayerUrl: env.relayerUrlMainnet || env.relayerUrl,
-      configured: Boolean(vaultAddress && exchangeAddress && usdtAddress),
+      configured: Boolean(vaultAddress && exchangeAddress && usdcAddress),
     };
   }
 
@@ -69,10 +77,10 @@ export function getContractAddressesForChain(chainId: number | undefined): Contr
   return {
     vaultAddress: env.vaultAddress,
     exchangeAddress: env.exchangeAddress,
-    usdtAddress: env.usdtAddress,
+    usdcAddress: env.usdcAddress,
     subgraphUrl: env.subgraphUrl,
     relayerUrl: env.relayerUrl,
-    configured: Boolean(env.vaultAddress && env.exchangeAddress && env.usdtAddress),
+    configured: Boolean(env.vaultAddress && env.exchangeAddress && env.usdcAddress),
   };
 }
 
@@ -82,7 +90,7 @@ export function getContractAddresses() {
   return {
     vaultAddress: a.vaultAddress,
     exchangeAddress: a.exchangeAddress,
-    usdtAddress: a.usdtAddress,
+    usdcAddress: a.usdcAddress,
   };
 }
 

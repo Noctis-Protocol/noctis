@@ -5,8 +5,11 @@
  *   requestSwapExecution → publicDecrypt([amount, sufficiency]) → executeSwapCallback
  *
  * BUY (2 proofs):
- *   request → decrypt amount → executeSwapCallback (prepares USDT lock)
+ *   request → decrypt amount → executeSwapCallback (prepares USDC lock)
  *   → BuySufficiencyReady → decrypt ebool → finalizeBuySwap (user tx; not relayer)
+ *
+ * V2: multi-token — routing (direct pool vs via WETH) is resolved on-chain per
+ * baseToken; there is no poolFee parameter anymore.
  */
 
 "use client";
@@ -18,48 +21,46 @@ import {
   usePublicClient,
 } from "wagmi";
 import { decodeEventLog, type Hash, type PublicClient } from "viem";
-import { NoctisExchangeABI } from "@/lib/contracts/abi";
+import { NoctisExchangeABI, NATIVE_TOKEN } from "@/lib/contracts/abi";
 import { useContractAddresses } from "@/lib/wagmi";
+import {
+  UNISWAP_V2_ROUTER,
+  WETH,
+  USDC,
+  UNISWAP_ROUTER_ABI,
+} from "@/lib/uniswapSepolia";
 import { useTransactionState } from "./useTransactionState";
 import { useFhevm } from "./useFhevm";
 import { useRelayer } from "./useRelayer";
 
-/** Must match Exchange UniswapV2Router + WETH (deployments/sepolia.json). */
-const UNISWAP_V2_ROUTER = "0xC532a74256D3Db42D0Bf7a0400fEFDbad7694008" as const;
-const WETH = "0x7b79995e5f793A07Bc00c21412e50Ecae098E7f9" as const;
-const USDC = "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238" as const;
-
-const UNISWAP_ROUTER_ABI = [
-  {
-    name: "getAmountsOut",
-    type: "function",
-    stateMutability: "view",
-    inputs: [
-      { name: "amountIn", type: "uint256" },
-      { name: "path", type: "address[]" },
-    ],
-    outputs: [{ name: "amounts", type: "uint256[]" }],
-  },
-] as const;
-
 /**
  * BUY debit is oracle-sized (Chainlink) but fill is Uniswap V2.
  * On thin Sepolia pools those diverge — minAmountOut must use the pool quote
- * of the actual usdtNeeded, not the UI/oracle ETH target.
+ * of the actual usdcNeeded, not the UI/oracle base-token target.
+ * Path mirrors the contract: USDC→WETH for native ETH, USDC→WETH→base when
+ * routed via WETH, USDC→base otherwise.
  */
-async function quoteEthOutForUsdc(
+async function quoteBaseOutForUsdc(
   publicClient: PublicClient,
-  usdcAmount: bigint
+  usdcAmount: bigint,
+  baseToken: `0x${string}`,
+  routeViaWeth: boolean
 ): Promise<bigint | null> {
   if (usdcAmount <= 0n) return null;
+  const isNative = baseToken.toLowerCase() === NATIVE_TOKEN;
+  const path: `0x${string}`[] = isNative
+    ? [USDC, WETH]
+    : routeViaWeth
+      ? [USDC, WETH, baseToken]
+      : [USDC, baseToken];
   try {
     const amounts = await publicClient.readContract({
       address: UNISWAP_V2_ROUTER,
       abi: UNISWAP_ROUTER_ABI,
       functionName: "getAmountsOut",
-      args: [usdcAmount, [USDC, WETH]],
+      args: [usdcAmount, path],
     });
-    return amounts?.[1] ?? null;
+    return amounts?.[amounts.length - 1] ?? null;
   } catch (e) {
     console.warn("BUY Uniswap quote failed:", e);
     return null;
@@ -95,12 +96,11 @@ interface DecryptProof {
 }
 
 interface UseSwapExecutionReturn {
-  /** isBuy as 3rd arg matches SwapCard; optional poolFee as 4th */
+  /** isBuy as 3rd arg matches SwapCard */
   executeFullSwap: (
     orderId: bigint,
     minAmountOut: bigint,
-    isBuy?: boolean,
-    poolFee?: number
+    isBuy?: boolean
   ) => Promise<boolean>;
   requestSwapExecution: (orderId: bigint) => Promise<string[] | null>;
   decryptAmount: (handles: string[]) => Promise<DecryptProof | null>;
@@ -108,8 +108,7 @@ interface UseSwapExecutionReturn {
     orderId: bigint,
     cleartexts: `0x${string}`,
     proof: `0x${string}`,
-    minAmountOut: bigint,
-    poolFee?: number
+    minAmountOut: bigint
   ) => Promise<boolean>;
   /** Unlock a stuck PendingSwap (BUY step-1 done / failed finalize). */
   cancelSwapExecution: (orderId: bigint) => Promise<boolean>;
@@ -119,7 +118,6 @@ interface UseSwapExecutionReturn {
   reset: () => void;
 }
 
-const DEFAULT_POOL_FEE = 3000;
 const isDev = process.env.NODE_ENV === "development";
 const log = (...args: unknown[]) => {
   if (isDev) console.log(...args);
@@ -206,7 +204,7 @@ function extractSwapHandles(
 
 function extractBuySufficiency(
   logs: readonly { data: `0x${string}`; topics: readonly `0x${string}`[] | `0x${string}`[] }[]
-): { sufficiencyHandle: string; usdtNeeded: bigint } | null {
+): { sufficiencyHandle: string; usdcNeeded: bigint } | null {
   for (const logEntry of logs) {
     try {
       const decoded = decodeEventLog({
@@ -217,11 +215,11 @@ function extractBuySufficiency(
       if (decoded.eventName === "BuySufficiencyReady") {
         const args = decoded.args as {
           sufficiencyHandle: `0x${string}`;
-          usdtNeeded: bigint;
+          usdcNeeded: bigint;
         };
         return {
           sufficiencyHandle: args.sufficiencyHandle,
-          usdtNeeded: args.usdtNeeded,
+          usdcNeeded: args.usdcNeeded,
         };
       }
     } catch {
@@ -284,12 +282,44 @@ export function useSwapExecution(options?: UseSwapExecutionOptions): UseSwapExec
           address: contracts.exchangeAddress as `0x${string}`,
           functionName: "getOrderPublic",
           args: [orderId],
-        })) as unknown as readonly [boolean, boolean, number, bigint, number];
-        // getOrderPublic → (exists, isBuy, status, timestamp, orderType)
-        return Boolean(pub[1]);
+        })) as unknown as readonly [boolean, `0x${string}`, boolean, number, bigint];
+        // V2 getOrderPublic → (exists, baseToken, isBuy, status, timestamp)
+        return Boolean(pub[2]);
       }
     },
     [publicClient, contracts, address]
+  );
+
+  /** BaseToken + routing of an order — used to re-quote the BUY pool floor. */
+  const resolveOrderRoute = useCallback(
+    async (
+      orderId: bigint
+    ): Promise<{ baseToken: `0x${string}`; routeViaWeth: boolean } | null> => {
+      if (!publicClient || !contracts?.exchangeAddress) return null;
+      try {
+        const pub = (await publicClient.readContract({
+          abi: NoctisExchangeABI,
+          address: contracts.exchangeAddress as `0x${string}`,
+          functionName: "getOrderPublic",
+          args: [orderId],
+        })) as unknown as readonly [boolean, `0x${string}`, boolean, number, bigint];
+        const baseToken = pub[1];
+        let routeViaWeth = false;
+        if (baseToken.toLowerCase() !== NATIVE_TOKEN) {
+          const cfg = (await publicClient.readContract({
+            abi: NoctisExchangeABI,
+            address: contracts.exchangeAddress as `0x${string}`,
+            functionName: "tradeConfigs",
+            args: [baseToken],
+          })) as unknown as readonly [boolean, `0x${string}`, number, boolean, bigint, bigint, bigint, bigint];
+          routeViaWeth = Boolean(cfg[3]);
+        }
+        return { baseToken, routeViaWeth };
+      } catch {
+        return null;
+      }
+    },
+    [publicClient, contracts]
   );
 
   const requestSwapExecution = useCallback(
@@ -443,8 +473,7 @@ export function useSwapExecution(options?: UseSwapExecutionOptions): UseSwapExec
     async (
       orderId: bigint,
       sufficiencyHandle: string,
-      minAmountOut: bigint,
-      poolFee: number
+      minAmountOut: bigint
     ): Promise<boolean> => {
       if (!contracts?.exchangeAddress || !publicClient) {
         setFailed("Exchange / client not ready");
@@ -458,7 +487,7 @@ export function useSwapExecution(options?: UseSwapExecutionOptions): UseSwapExec
       try {
         setSwapState((prev) => ({ ...prev, step: "finalizing" }));
         setPending(4, 4);
-        log("BUY finalize: decrypting USDT sufficiency ebool...");
+        log("BUY finalize: decrypting USDC sufficiency ebool...");
 
         // Sufficiency ebool was makePubliclyDecryptable by the Vault
         const vaultAddr = contracts.vaultAddress || contracts.exchangeAddress;
@@ -490,7 +519,7 @@ export function useSwapExecution(options?: UseSwapExecutionOptions): UseSwapExec
           return false;
         }
         if (!Boolean(suffRaw)) {
-          setFailed("Insufficient USDT balance for buy");
+          setFailed("Insufficient USDC balance for buy");
           setSwapState((prev) => ({ ...prev, step: "error" }));
           return false;
         }
@@ -505,7 +534,6 @@ export function useSwapExecution(options?: UseSwapExecutionOptions): UseSwapExec
             decryptResult.abiEncodedClearValues as `0x${string}`,
             decryptResult.decryptionProof as `0x${string}`,
             minAmountOut,
-            poolFee,
           ],
           gas: 4_000_000n,
         });
@@ -609,7 +637,6 @@ export function useSwapExecution(options?: UseSwapExecutionOptions): UseSwapExec
       cleartexts: `0x${string}`,
       proof: `0x${string}`,
       minAmountOut: bigint,
-      poolFee: number = DEFAULT_POOL_FEE,
       isBuy: boolean = false,
       /** Prefer decrypted amount from this turn — swapState.amount may still be stale. */
       decryptedAmount?: bigint | null
@@ -625,7 +652,7 @@ export function useSwapExecution(options?: UseSwapExecutionOptions): UseSwapExec
         setPending(3, 4);
         log(isBuy ? "BUY step 1: prepare sufficiency..." : "SELL: execute swap...");
 
-        let buySuff: { sufficiencyHandle: string; usdtNeeded: bigint } | null = null;
+        let buySuff: { sufficiencyHandle: string; usdcNeeded: bigint } | null = null;
 
         if (
           !isBuy &&
@@ -637,7 +664,6 @@ export function useSwapExecution(options?: UseSwapExecutionOptions): UseSwapExec
             orderId,
             amount: swapAmount,
             minAmountOut,
-            poolFee,
             cleartexts,
             decryptionProof: proof,
           });
@@ -660,7 +686,6 @@ export function useSwapExecution(options?: UseSwapExecutionOptions): UseSwapExec
             orderId,
             amount: swapAmount,
             minAmountOut,
-            poolFee,
             cleartexts,
             decryptionProof: proof,
           });
@@ -669,7 +694,7 @@ export function useSwapExecution(options?: UseSwapExecutionOptions): UseSwapExec
           if (handle) {
             buySuff = {
               sufficiencyHandle: handle,
-              usdtNeeded: BigInt(result.usdtNeeded || 0),
+              usdcNeeded: BigInt(result.usdcNeeded || 0),
             };
           } else if (publicClient) {
             const receipt = await publicClient.getTransactionReceipt({
@@ -682,7 +707,7 @@ export function useSwapExecution(options?: UseSwapExecutionOptions): UseSwapExec
             abi: NoctisExchangeABI,
             address: contracts.exchangeAddress as `0x${string}`,
             functionName: "executeSwapCallback",
-            args: [orderId, cleartexts, proof, minAmountOut, poolFee],
+            args: [orderId, cleartexts, proof, minAmountOut],
             gas: 4_000_000n,
           });
           setConfirming(hash);
@@ -717,35 +742,41 @@ export function useSwapExecution(options?: UseSwapExecutionOptions): UseSwapExec
             setSwapState((prev) => ({ ...prev, step: "error" }));
             return false;
           }
-          log("USDT needed (clear at prepare):", buySuff.usdtNeeded.toString());
+          log("USDC needed (clear at prepare):", buySuff.usdcNeeded.toString());
 
           // Re-quote Uniswap for the oracle-locked USDC.
           // On-chain floor is still oracle-based (max 3% slip) — if the pool
           // cannot clear that floor, do not send finalizeBuySwap (saves gas).
           let buyMinOut = minAmountOut;
-          const quoted = await quoteEthOutForUsdc(publicClient, buySuff.usdtNeeded);
-          if (quoted != null && quoted > 0n) {
-            const poolFloor = (quoted * 9800n) / 10000n;
-            buyMinOut = minAmountOut > 0n && minAmountOut <= poolFloor
-              ? minAmountOut
-              : poolFloor;
-            log(
-              "BUY minAmountOut from pool quote:",
-              buyMinOut.toString(),
-              "(quoted",
-              quoted.toString(),
-              "uiMin",
-              minAmountOut.toString(),
-              ")"
+          const route = await resolveOrderRoute(orderId);
+          if (route) {
+            const quoted = await quoteBaseOutForUsdc(
+              publicClient,
+              buySuff.usdcNeeded,
+              route.baseToken,
+              route.routeViaWeth
             );
-
+            if (quoted != null && quoted > 0n) {
+              const poolFloor = (quoted * 9800n) / 10000n;
+              buyMinOut = minAmountOut > 0n && minAmountOut <= poolFloor
+                ? minAmountOut
+                : poolFloor;
+              log(
+                "BUY minAmountOut from pool quote:",
+                buyMinOut.toString(),
+                "(quoted",
+                quoted.toString(),
+                "uiMin",
+                minAmountOut.toString(),
+                ")"
+              );
+            }
           }
 
           return finalizeBuy(
             orderId,
             buySuff.sufficiencyHandle,
-            buyMinOut,
-            poolFee
+            buyMinOut
           );
         }
 
@@ -766,6 +797,7 @@ export function useSwapExecution(options?: UseSwapExecutionOptions): UseSwapExec
       relayer,
       swapState.amount,
       finalizeBuy,
+      resolveOrderRoute,
       setPending,
       setConfirming,
       setSuccess,
@@ -778,8 +810,7 @@ export function useSwapExecution(options?: UseSwapExecutionOptions): UseSwapExec
     async (
       orderId: bigint,
       minAmountOut: bigint,
-      isBuyHint?: boolean,
-      poolFee: number = DEFAULT_POOL_FEE
+      isBuyHint?: boolean
     ): Promise<boolean> => {
       try {
         const isBuy = await resolveIsBuy(orderId, isBuyHint);
@@ -802,7 +833,6 @@ export function useSwapExecution(options?: UseSwapExecutionOptions): UseSwapExec
           decryptResult.cleartexts,
           decryptResult.proof,
           minAmountOut,
-          poolFee,
           isBuy,
           decryptResult.amount
         );
@@ -827,8 +857,8 @@ export function useSwapExecution(options?: UseSwapExecutionOptions): UseSwapExec
     executeFullSwap,
     requestSwapExecution,
     decryptAmount,
-    executeSwap: (orderId, cleartexts, proof, minAmountOut, poolFee) =>
-      executeSwap(orderId, cleartexts, proof, minAmountOut, poolFee, false, undefined),
+    executeSwap: (orderId, cleartexts, proof, minAmountOut) =>
+      executeSwap(orderId, cleartexts, proof, minAmountOut, false, undefined),
     cancelSwapExecution,
     swapState,
     isLoading: state.status === "pending" || state.status === "confirming",

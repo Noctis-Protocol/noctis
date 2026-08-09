@@ -29,8 +29,10 @@ import { useFhevm } from "./useFhevm";
 import { useRelayer } from "./useRelayer";
 
 interface CreateOrderParams {
-  amountETH: bigint;
-  amountUSDT: bigint;
+  /** Base token traded against USDC (address(0) = native ETH) */
+  baseToken: `0x${string}`;
+  /** Order size in base-token units (respect per-token decimals) */
+  amountBase: bigint;
   isBuy: boolean;
   slippageBPS?: number;  // Default: 50 (0.5%)
   maxDeviationBPS?: number; // Default: 150 (1.5%)
@@ -71,8 +73,8 @@ export function useNoctisExchange(): UseNoctisExchangeReturn {
   // Create market order via relayer (PRIVACY: user signs, relayer submits)
   const createMarketOrder = useCallback(
     async ({ 
-      amountETH, 
-      amountUSDT, 
+      baseToken,
+      amountBase,
       isBuy, 
       slippageBPS = 50,
       maxDeviationBPS = 150 
@@ -91,7 +93,8 @@ export function useNoctisExchange(): UseNoctisExchangeReturn {
           }
 
           const result = await relayer.signAndCreateOrder({
-            amountETH,
+            baseToken,
+            amountBase,
             isBuy,
             slippageBPS,
             maxDeviationBPS,
@@ -122,7 +125,7 @@ export function useNoctisExchange(): UseNoctisExchangeReturn {
           abi: NoctisExchangeABI,
           address: contracts.exchangeAddress as `0x${string}`,
           functionName: "createMarketOrder",
-          args: [amountETH, isBuy, slippageBPS, maxDeviationBPS],
+          args: [baseToken, amountBase, isBuy, slippageBPS, maxDeviationBPS],
           gas: 2_000_000n,
         });
         
@@ -147,7 +150,7 @@ export function useNoctisExchange(): UseNoctisExchangeReturn {
               topics: log.topics,
             });
             if (decoded.eventName === "OrderCreated") {
-              orderId = (decoded.args as any).orderId;
+              orderId = (decoded.args as { orderId: bigint }).orderId;
               break;
             }
           } catch { /* skip */ }
@@ -172,7 +175,7 @@ export function useNoctisExchange(): UseNoctisExchangeReturn {
         return null;
       }
     },
-    [contracts, publicClient, writeContractAsync, relayer, isFheReady, setPending, setConfirming, setSuccess, setFailed]
+    [contracts, publicClient, writeContractAsync, relayer, setPending, setConfirming, setSuccess, setFailed]
   );
 
   // Cancel order via relayer

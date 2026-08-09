@@ -46,17 +46,22 @@ export function useWithdrawalStatus(requestIds: string[]): Map<string, Withdrawa
 
     try {
       const numericId = requestId.replace("withdrawal-", "");
-      
+
+      // V2: getWithdrawalRequest returns the WithdrawalRequest struct
       const request = await publicClient.readContract({
         address: contracts.vaultAddress as `0x${string}`,
         abi: NoctisVaultABI,
-        functionName: "withdrawalRequests",
+        functionName: "getWithdrawalRequest",
         args: [BigInt(numericId)],
-      }) as any;
+      }) as {
+        executed: boolean;
+        decryptionRequested: boolean;
+        decryptionRequestTime: bigint;
+      };
 
-      const executed = request.executed ?? request[9];
-      const gatewayRequested = request.gatewayRequested ?? request[11];
-      const gatewayRequestTime = Number(request.gatewayRequestTime ?? request[12] ?? 0);
+      const executed = request.executed;
+      const gatewayRequested = request.decryptionRequested;
+      const gatewayRequestTime = Number(request.decryptionRequestTime ?? 0);
       
       const now = Math.floor(Date.now() / 1000);
       
@@ -91,19 +96,23 @@ export function useWithdrawalStatus(requestIds: string[]): Map<string, Withdrawa
     }
   }, [publicClient, contracts?.vaultAddress]);
 
+  // Stable key so the effect only re-runs when the set of IDs changes
+  const requestIdsKey = requestIds.join(",");
+
   useEffect(() => {
-    if (requestIds.length === 0) return;
+    if (!requestIdsKey) return;
+    const ids = requestIdsKey.split(",");
 
     const fetchAllStatuses = async () => {
       const newStatuses = new Map<string, WithdrawalStatus>();
-      
+
       await Promise.all(
-        requestIds.map(async (id) => {
+        ids.map(async (id) => {
           const status = await fetchStatus(id);
           newStatuses.set(id, status);
         })
       );
-      
+
       setStatuses(newStatuses);
     };
 
@@ -112,7 +121,7 @@ export function useWithdrawalStatus(requestIds: string[]): Map<string, Withdrawa
     // Refresh every 30 seconds to update countdown
     const interval = setInterval(fetchAllStatuses, 30000);
     return () => clearInterval(interval);
-  }, [requestIds.join(","), fetchStatus]);
+  }, [requestIdsKey, fetchStatus]);
 
   return statuses;
 }

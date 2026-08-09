@@ -205,7 +205,7 @@ async function fetchOnchainMetrics(): Promise<OnchainMetrics> {
 
     const vault = PILOT.vault as `0x${string}`;
     const exchange = PILOT.exchange as `0x${string}`;
-    const usdc = PILOT.usdt as `0x${string}`;
+    const usdc = PILOT.usdc as `0x${string}`;
 
     const [blockRes, ethRes, usdcRes, counterRes] = await Promise.allSettled([
       client.getBlockNumber(),
@@ -257,7 +257,7 @@ export async function getMetrics(): Promise<MetricsPayload> {
     addresses: {
       vault: PILOT.vault,
       exchange: PILOT.exchange,
-      usdc: PILOT.usdt,
+      usdc: PILOT.usdc,
     },
     subgraph,
     onchain,

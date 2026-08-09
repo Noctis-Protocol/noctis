@@ -17,7 +17,8 @@ import { useAccount } from "wagmi";
 
 export interface BalanceTransaction {
   type: "deposit" | "withdrawal" | "trade";
-  token: "ETH" | "USDC";
+  /** Token symbol (multi-token V2: any registered symbol, e.g. "ETH", "USDC") */
+  token: string;
   amount: number; // Amount in human-readable format (e.g., 0.01 for ETH)
   timestamp: number;
   txHash?: string;
@@ -31,9 +32,11 @@ interface BalanceTrackerData {
 }
 
 interface UseBalanceTrackerReturn {
-  // Estimated balances
+  // Estimated balances (legacy shortcuts)
   estimatedETH: number;
   estimatedUSDT: number;
+  /** Estimated local balance for any token symbol */
+  estimatedFor: (symbol: string) => number;
   // Add transaction
   addTransaction: (tx: BalanceTransaction) => void;
   // Transaction history
@@ -153,41 +156,30 @@ export function useBalanceTracker(): UseBalanceTrackerReturn {
     saveTransactions([]);
   }, [saveTransactions]);
 
-  // Calculate estimated balances
-  const estimatedETH = transactions.reduce((acc, tx) => {
-    if (tx.token !== "ETH") return acc;
-    
-    switch (tx.type) {
-      case "deposit":
-        return acc + tx.amount;
-      case "withdrawal":
-        return acc - tx.amount;
-      case "trade":
-        // Trade amount can be positive (received) or negative (sent)
-        return acc + tx.amount;
-      default:
-        return acc;
-    }
-  }, 0);
-
-  const estimatedUSDT = transactions.reduce((acc, tx) => {
-    if (tx.token !== "USDC") return acc;
-    
-    switch (tx.type) {
-      case "deposit":
-        return acc + tx.amount;
-      case "withdrawal":
-        return acc - tx.amount;
-      case "trade":
-        return acc + tx.amount;
-      default:
-        return acc;
-    }
-  }, 0);
+  // Calculate estimated balance for a token symbol
+  const estimatedFor = useCallback(
+    (symbol: string) =>
+      transactions.reduce((acc, tx) => {
+        if (tx.token !== symbol) return acc;
+        switch (tx.type) {
+          case "deposit":
+            return acc + tx.amount;
+          case "withdrawal":
+            return acc - tx.amount;
+          case "trade":
+            // Trade amount can be positive (received) or negative (sent)
+            return acc + tx.amount;
+          default:
+            return acc;
+        }
+      }, 0),
+    [transactions]
+  );
 
   return {
-    estimatedETH,
-    estimatedUSDT,
+    estimatedETH: estimatedFor("ETH"),
+    estimatedUSDT: estimatedFor("USDC"),
+    estimatedFor,
     addTransaction,
     transactions,
     clearHistory,
