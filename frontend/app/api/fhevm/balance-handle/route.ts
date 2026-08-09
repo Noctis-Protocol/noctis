@@ -13,6 +13,13 @@ import { createPublicClient, http, type Hex } from "viem";
 import { sepolia } from "viem/chains";
 import { guardFhevmApi } from "@/lib/apiGuard";
 
+// PRIVACY (phase B): user<->handle pairings must never be cached by proxies
+const NO_STORE = { headers: { "Cache-Control": "no-store" } } as const;
+
+function json(data: unknown, status = 200) {
+  return NextResponse.json(data, { status, ...NO_STORE });
+}
+
 const ZERO =
   "0x0000000000000000000000000000000000000000000000000000000000000000";
 const NATIVE = "0x0000000000000000000000000000000000000000";
@@ -79,24 +86,15 @@ export async function GET(request: NextRequest) {
     const token = resolveToken(searchParams.get("token"));
 
     if (!user || !/^0x[a-fA-F0-9]{40}$/.test(user)) {
-      return NextResponse.json(
-        { error: "Missing or invalid user address" },
-        { status: 400 }
-      );
+      return json({ error: "Missing or invalid user address" }, 400);
     }
     if (!token) {
-      return NextResponse.json(
-        { error: "Missing or invalid token address" },
-        { status: 400 }
-      );
+      return json({ error: "Missing or invalid token address" }, 400);
     }
 
     const vault = vaultAddress();
     if (!vault) {
-      return NextResponse.json(
-        { error: "NEXT_PUBLIC_VAULT_ADDRESS not configured" },
-        { status: 500 }
-      );
+      return json({ error: "NEXT_PUBLIC_VAULT_ADDRESS not configured" }, 500);
     }
 
     const client = createPublicClient({
@@ -112,7 +110,7 @@ export async function GET(request: NextRequest) {
         args: [user as Hex, token],
       })) as boolean;
       if (!deposited) {
-        return NextResponse.json({
+        return json({
           success: true,
           handle: null,
           empty: true,
@@ -132,7 +130,7 @@ export async function GET(request: NextRequest) {
     })) as string;
 
     if (!handle || handle === ZERO) {
-      return NextResponse.json({
+      return json({
         success: true,
         handle: null,
         empty: true,
@@ -140,7 +138,7 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    return NextResponse.json({
+    return json({
       success: true,
       handle,
       empty: false,
@@ -150,6 +148,6 @@ export async function GET(request: NextRequest) {
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Failed to read balance handle";
     console.error("balance-handle error:", message);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return json({ error: message }, 500);
   }
 }

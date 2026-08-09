@@ -1,10 +1,32 @@
 # Roadmap — End-to-End Encrypted Intents
 
-**Status:** Phase A SHIPPED (MVP, 2026-08-09) — `createEncryptedOrderViaRelayer`
-(browser-side FHE input encryption, bounds enforced at settlement) and
-pseudo-random vaultIds are live on Sepolia. Sections below kept for the
-phase B / Year 2 tracks (one-time order keys, signature-based cancel,
-withdrawal batching, stealth-address settlement, encrypted direction).
+**Status:** Phases A **and B** SHIPPED (MVP, 2026-08-09).
+
+- **Phase A** — `createEncryptedOrderViaRelayer` (browser-side FHE input
+  encryption, bounds enforced at settlement) and pseudo-random vaultIds.
+- **Phase B** — live on Sepolia (V2.2):
+  - **One-time vaultIds (rotation):** the vault rotates a trader's vaultId
+    whenever a relayed order reaches a terminal state (fill or cancel), so
+    relayed-order calldata never shows the same pseudonym across sequential
+    orders — orders stop clustering by id. This supersedes the originally
+    sketched "one-time order keys with encrypted binding": any on-chain
+    verifiable key↔user binding is publicly computable without ZK, whereas
+    rotation delivers the same calldata-unlinkability with one storage
+    rotation per settlement. Keeper authorizes post-creation steps against a
+    persisted `orderId → owner` map (the creation pseudonym is dead by then);
+    the economic policy is keyed by owner address so rotation cannot bypass
+    per-user caps.
+  - **Withdrawal batching windows:** `requestWithdrawalExecution` is quantized
+    to `withdrawalBatchWindow` boundaries (300s on Sepolia, owner-tunable,
+    capped at 1h) — payouts land together, breaking 1:1 fill→payout timing.
+  - **Off-chain metadata hardening:** browser-side FHE encryption for private
+    withdrawals too (the `/api/fhevm/encrypt` server route that received
+    plaintext amounts is deleted), `Cache-Control: no-store` on the relayer
+    and on `balance-handle`, no IP persisted in relay logs.
+- **Remaining (Year 2):** storage-read linkability (`vaultOwners`,
+  `orderTraders` are plaintext slots readable via `eth_getStorageAt` — the
+  settlement credit path needs a plaintext address today), stealth-address
+  settlement, encrypted direction.
 **Scope:** contracts (`NoctisExchangeV2`, `NoctisVaultV2`), keeper, frontend, subgraph
 **Goal:** shrink the trust window on order size from *relayer + anyone parsing calldata* down to *settlement only* (where the size becomes public at the Uniswap fill anyway).
 
@@ -205,15 +227,16 @@ These are **not solved by encrypted intents** and need their own tracks.
 
 ## 5. Rollout order
 
-1. **A0 (now, no code):** update docs to state the calldata reality — the
-   relayed path's amount is public on-chain today, not merely relayer-visible.
-2. **A1:** random vaultIds + encrypted-intent entrypoint + keeper/frontend
-   support, behind a `tradeConfig` flag per pair. Old entrypoint stays for
-   rollback.
-3. **A2:** flip the desk default to encrypted intents; monitor settle-ratio
-   and HCU costs for two weeks; then disable the plaintext relayer entrypoint.
-4. **B:** one-time order keys + signature-based cancel + withdrawal batching.
-5. **Year 2:** stealth-address settlement, encrypted direction.
+1. ~~**A0/A1/A2:** encrypted-intent entrypoint, random vaultIds, keeper +
+   frontend support.~~ **SHIPPED** (V2.1, 2026-08-09).
+2. ~~**B:** one-time vaultIds (rotation at terminal states), withdrawal
+   batching windows, off-chain metadata hardening.~~ **SHIPPED**
+   (V2.2, 2026-08-09). Signature-based cancel is effectively live through the
+   relayed EIP-712 path; dropping the plaintext `orderTraders` mapping is
+   blocked on the settlement credit path (needs a plaintext address) and moves
+   to the stealth-address track.
+3. **Year 2:** stealth-address settlement (removes plaintext identity storage
+   entirely), encrypted direction.
 
 ## 6. Open questions
 

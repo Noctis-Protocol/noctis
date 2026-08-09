@@ -532,6 +532,7 @@ contract NoctisExchangeV2 is ReentrancyGuard, Pausable, AccessControl, GatewayCa
 
         order.status = OrderStatus.Cancelled;
         userOrders[msg.sender].remove(orderId);
+        _rotateIfRelayed(orderId, msg.sender);
 
         emit OrderCancelled(orderId, block.timestamp);
     }
@@ -541,8 +542,10 @@ contract NoctisExchangeV2 is ReentrancyGuard, Pausable, AccessControl, GatewayCa
         if (order.orderId == 0) revert OrderNotFound();
         if (order.status != OrderStatus.Pending) revert OrderNotPending();
 
+        address trader = orderTraders[orderId];
         order.status = OrderStatus.Cancelled;
-        userOrders[orderTraders[orderId]].remove(orderId);
+        userOrders[trader].remove(orderId);
+        _rotateIfRelayed(orderId, trader);
 
         emit OrderCancelled(orderId, block.timestamp);
     }
@@ -644,6 +647,7 @@ contract NoctisExchangeV2 is ReentrancyGuard, Pausable, AccessControl, GatewayCa
         delete swapSufficiencyHandles[orderId];
 
         uint256 amountOut = _executeUserSwap(order, sellAmount, 0, minAmountOut, cleartexts, decryptionProof);
+        _rotateIfRelayed(orderId, msg.sender);
 
         emit OrderFilledSimple(orderId, block.timestamp);
         _emitFilledPrivate(orderId, handles[0], amountOut, orderTraders[orderId]);
@@ -694,6 +698,7 @@ contract NoctisExchangeV2 is ReentrancyGuard, Pausable, AccessControl, GatewayCa
         delete swapSufficiencyHandles[orderId];
 
         uint256 amountOut = _executeUserSwap(order, amount, 0, minAmountOut, cleartexts, decryptionProof);
+        _rotateIfRelayed(orderId, trader);
 
         emit OrderFilledSimple(orderId, block.timestamp);
         _emitFilledPrivate(orderId, handles[0], amountOut, trader);
@@ -731,9 +736,21 @@ contract NoctisExchangeV2 is ReentrancyGuard, Pausable, AccessControl, GatewayCa
         uint256 amountOut = _executeUserSwap(
             order, amountBase, usdcNeeded, minAmountOut, sufficiencyCleartexts, sufficiencyProof
         );
+        _rotateIfRelayed(orderId, trader);
 
         emit OrderFilledSimple(orderId, block.timestamp);
         _emitFilledPrivate(orderId, FHE.toBytes32(order.encryptedAmountBase), amountOut, trader);
+    }
+
+    /// @dev PRIVACY (phase B): one-time pseudonyms. When a relayed order reaches
+    ///      a terminal state (fill or cancel), rotate the trader's vaultId so the
+    ///      next relayed creation shows a never-seen-before id in calldata —
+    ///      orders no longer cluster per trader. Self-relay orders (vaultId 0)
+    ///      are skipped: tx.from is visible anyway.
+    function _rotateIfRelayed(uint256 orderId, address trader) internal {
+        if (orderVaultIds[orderId] != 0) {
+            vault.rotateVaultId(trader);
+        }
     }
 
     /// @dev Settlement-time amount bounds. Orders created through the encrypted

@@ -385,7 +385,7 @@ export default function DocsPage() {
                           opaque to the relayer and to calldata)
                         </td>
                         <td className="px-5 py-3.5">
-                          Pair, direction and an opaque vaultId in relayed calldata
+                          Pair, direction and a one-time vaultId in relayed calldata
                         </td>
                       </tr>
                       <tr>
@@ -417,12 +417,15 @@ export default function DocsPage() {
                   transaction calldata and the on-chain order all carry an
                   opaque handle, never the plaintext. The size only becomes
                   public at settlement, where the Uniswap fill reveals it
-                  anyway. Residual metadata: the pair, direction and a
-                  pseudo-random vaultId are visible in relayed calldata, so a
-                  user&apos;s orders can be clustered — one-time order keys
-                  are the next hardening step. The relayer can censor or
-                  delay, but cannot read amounts, alter the EIP-712-signed
-                  parameters, or decrypt vault balances.
+                  anyway. The vaultId in calldata is a <strong
+                  className="font-semibold text-ink-700">one-time
+                  pseudonym</strong>: it rotates every time an order fills or
+                  cancels, so your orders never cluster under one id.
+                  Withdrawal payouts are batched into time windows to break
+                  fill-to-payout timing. Residual metadata: the pair and
+                  direction stay visible in relayed calldata. The relayer can
+                  censor or delay, but cannot read amounts, alter the
+                  EIP-712-signed parameters, or decrypt vault balances.
                 </p>
                 <p className="mt-3 max-w-[65ch] text-sm leading-relaxed text-ink-500">
                   The desk market panel shows the selected pair&apos;s Uniswap V2

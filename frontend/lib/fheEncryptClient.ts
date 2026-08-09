@@ -61,6 +61,23 @@ export function prewarmFheEncryption(): void {
 }
 
 /**
+ * Encrypt a uint128 amount fully in the browser (generic FHE external input).
+ * The proof binds to (contractAddress, userAddress) where userAddress is the
+ * on-chain msg.sender of the call that will consume the input.
+ */
+export async function encryptAmount128(
+  contractAddress: string,
+  userAddress: string,
+  amount: bigint
+): Promise<{ encryptedAmount: `0x${string}`; inputProof: `0x${string}` }> {
+  const instance = await getBrowserInstance();
+  const input = instance.createEncryptedInput(contractAddress, userAddress);
+  input.add128(amount);
+  const { handles, inputProof } = await input.encrypt();
+  return { encryptedAmount: toHex(handles[0]), inputProof: toHex(inputProof) };
+}
+
+/**
  * Encrypt an order amount for the relayed path.
  * Returns the FHE handle (signed in the EIP-712 intent) and the input proof.
  */
@@ -69,9 +86,5 @@ export async function encryptAmountForRelayer(
   relayerAddress: string,
   amount: bigint
 ): Promise<{ encryptedAmount: `0x${string}`; inputProof: `0x${string}` }> {
-  const instance = await getBrowserInstance();
-  const input = instance.createEncryptedInput(exchangeAddress, relayerAddress);
-  input.add128(amount);
-  const { handles, inputProof } = await input.encrypt();
-  return { encryptedAmount: toHex(handles[0]), inputProof: toHex(inputProof) };
+  return encryptAmount128(exchangeAddress, relayerAddress, amount);
 }

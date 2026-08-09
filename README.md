@@ -24,10 +24,13 @@ What stays private, from whom:
   settlement. Order bounds are enforced on the KMS-proven cleartext at
   execution time.
 - **Unlinkability with known limits.** `tx.from` is the relayer and the trader
-  appears in no event or getter; vaultIds are pseudo-random (not sequential).
-  Residual: a user's orders share a vaultId (cluster together), and raw
-  storage reads can still link a vaultId to its address — one-time order keys
-  are the phase B fix (`ROADMAP_E2E_ENCRYPTED_INTENTS.md`).
+  appears in no event or getter; vaultIds are pseudo-random AND one-time — the
+  vault rotates a trader's pseudonym every time a relayed order fills or
+  cancels, so sequential orders never share an id in calldata. Withdrawal
+  payouts are quantized to batching windows to break fill→payout timing.
+  Residual: raw storage reads (`eth_getStorageAt`) can still link a live
+  pseudonym to its address — stealth-address settlement is the Year 2 fix
+  (`ROADMAP_E2E_ENCRYPTED_INTENTS.md`).
 - **Trusted relayer for liveness only.** The relayer can censor or delay, but
   cannot read amounts, decrypt balances, alter EIP-712-signed parameters, or
   move funds outside the signed paths.

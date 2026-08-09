@@ -189,6 +189,14 @@ async function main() {
   const safeUsdcAfter = await usdc.balanceOf(feeRecipient);
   console.log("gasRecipient USDC delta:", ethers.formatUnits(relayerUsdcAfter - relayerUsdcBefore, 6));
   console.log("feeRecipient USDC delta:", ethers.formatUnits(safeUsdcAfter - safeUsdcBefore, 6));
+
+  // 9. PRIVACY (phase B): the vaultId must have rotated on fill —
+  //    one-time pseudonyms mean the creation id is now dead.
+  const vaultIdAfter: bigint = await vault.getMyVaultId();
+  console.log("vaultId after fill:", vaultIdAfter.toString());
+  if (vaultIdAfter === vaultId) throw new Error("vaultId did NOT rotate after settlement");
+  console.log("one-time vaultId rotation verified ✅");
+
   console.log("\nSMOKE TEST PASSED");
 }
 

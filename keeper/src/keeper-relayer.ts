@@ -173,6 +173,50 @@ function consumeNonceOrReject(
   return true;
 }
 
+// PRIVACY (phase B): vaultIds are one-time pseudonyms — the exchange rotates
+// them when a relayed order reaches a terminal state. The creation-time
+// vaultId therefore cannot authorize later steps (requestSwap/executeSwap/
+// cancel). Instead the relayer records orderId -> owner at creation and
+// authorizes subsequent steps against that persisted map.
+const RELAYED_ORDERS_PATH = path.join(__dirname, '..', 'logs', 'relayed-orders.json');
+const MAX_RELAYED_ORDERS = 20_000;
+const relayedOrderOwners = new Map<string, string>(); // orderId → owner (lowercase)
+
+function loadRelayedOrders(): void {
+  ensureLogsDir();
+  try {
+    if (!fs.existsSync(RELAYED_ORDERS_PATH)) return;
+    const raw = JSON.parse(fs.readFileSync(RELAYED_ORDERS_PATH, 'utf8')) as Record<string, string>;
+    for (const [orderId, owner] of Object.entries(raw)) {
+      relayedOrderOwners.set(orderId, owner);
+    }
+    console.log(`[ORDERS] Loaded ${relayedOrderOwners.size} relayed order owner(s)`);
+  } catch (e: any) {
+    console.warn('[ORDERS] Failed to load relayed-orders.json:', e.message);
+  }
+}
+
+function persistRelayedOrders(): void {
+  ensureLogsDir();
+  if (relayedOrderOwners.size > MAX_RELAYED_ORDERS) {
+    // Drop oldest insertions (Map preserves insertion order)
+    const drop = relayedOrderOwners.size - MAX_RELAYED_ORDERS;
+    let i = 0;
+    for (const key of relayedOrderOwners.keys()) {
+      if (i++ >= drop) break;
+      relayedOrderOwners.delete(key);
+    }
+  }
+  const obj: Record<string, string> = {};
+  for (const [orderId, owner] of relayedOrderOwners) obj[orderId] = owner;
+  fs.writeFileSync(RELAYED_ORDERS_PATH, JSON.stringify(obj), 'utf8');
+}
+
+function recordRelayedOrder(orderId: string, owner: string): void {
+  relayedOrderOwners.set(orderId, owner.toLowerCase());
+  persistRelayedOrders();
+}
+
 /** K-1: reject expired or far-future deadlines (max 1h window). */
 const MAX_SIG_DEADLINE_SECS = 3600;
 
@@ -194,6 +238,7 @@ function validateDeadlineOrReject(
 }
 
 loadUsedNonces();
+loadRelayedOrders();
 
 /** Simple sliding-window rate limiter (per IP). */
 const rateBuckets = new Map<string, number[]>();
@@ -367,6 +412,11 @@ class KeeperRelayerService {
       })
     );
     this.app.use(express.json({ limit: CONFIG.bodyLimit }));
+    // PRIVACY (phase B): relay responses must never be cached by intermediaries
+    this.app.use((_req, res, next) => {
+      res.setHeader('Cache-Control', 'no-store');
+      next();
+    });
     this.app.use(rateLimitMiddleware);
     this.setupRoutes();
   }
@@ -382,6 +432,33 @@ class KeeperRelayerService {
     return (await this.vaultReader.getAddressByVaultId.staticCall(vaultId, {
       from: CONFIG.exchangeAddress,
     })) as string;
+  }
+
+  /**
+   * PRIVACY (phase B): authorize a post-creation step (requestSwap/executeSwap/
+   * cancel) against the persisted orderId -> owner map. The creation vaultId is
+   * a one-time pseudonym (rotated at terminal states), so it cannot be used to
+   * authorize later steps. Fails closed if the order is unknown — the user can
+   * always fall back to the on-chain self path.
+   */
+  private authorizeOrderStep(
+    orderId: string | number | bigint,
+    signer: string,
+    res: express.Response
+  ): boolean {
+    const owner = relayedOrderOwners.get(String(orderId));
+    if (!owner) {
+      res.status(403).json({
+        error: 'Order not tracked by this relayer',
+        hint: 'Use the on-chain self path (requestSwapExecution/cancelOrder) or recreate the order',
+      });
+      return false;
+    }
+    if (signer.toLowerCase() !== owner) {
+      res.status(403).json({ error: 'Signer does not own this order' });
+      return false;
+    }
+    return true;
   }
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -516,21 +593,6 @@ class KeeperRelayerService {
 
         if (!validateDeadlineOrReject(deadline, res)) return;
 
-        // Economic policy: in-flight cap, settle-ratio throttle, gas budget
-        let vaultKey: string;
-        try {
-          vaultKey = BigInt(vaultId).toString();
-        } catch {
-          return res.status(400).json({ error: 'Invalid vaultId' });
-        }
-        const decision = this.policy.checkCreate(vaultKey);
-        if (!decision.allowed) {
-          console.warn(`[POLICY] createOrder refused: ${decision.reason}`);
-          return res
-            .status(decision.httpStatus || 429)
-            .json({ error: decision.hint, reason: decision.reason });
-        }
-
         // Gas-in-kind refund: default 0 (no refund) if the client omits it
         const refundWei = BigInt(gasRefundWei || '0');
 
@@ -549,10 +611,22 @@ class KeeperRelayerService {
 
         const recoveredSigner = verifyTypedData(EIP712_DOMAIN, { CreateOrder: EIP712_TYPES.CreateOrder }, message, signature);
 
-        // Verify signer owns the vaultId
+        // Verify signer owns the (current) vaultId
         const vaultOwner = await this.resolveVaultOwner(vaultId);
         if (recoveredSigner.toLowerCase() !== vaultOwner.toLowerCase()) {
           return res.status(403).json({ error: 'Signer does not own this vaultId' });
+        }
+
+        // Economic policy: in-flight cap, settle-ratio throttle, gas budget.
+        // PRIVACY (phase B): keyed by the resolved owner, NOT the vaultId —
+        // rotating pseudonyms would otherwise give each order a fresh bucket.
+        const ownerKey = vaultOwner.toLowerCase();
+        const decision = this.policy.checkCreate(ownerKey);
+        if (!decision.allowed) {
+          console.warn(`[POLICY] createOrder refused: ${decision.reason}`);
+          return res
+            .status(decision.httpStatus || 429)
+            .json({ error: decision.hint, reason: decision.reason });
         }
 
         if (!consumeNonceOrReject(vaultId, nonce, res)) return;
@@ -589,7 +663,12 @@ class KeeperRelayerService {
           } catch { /* skip non-matching logs */ }
         }
 
-        if (orderId) this.policy.noteCreated(vaultKey, orderId);
+        if (orderId) {
+          this.policy.noteCreated(ownerKey, orderId);
+          // Phase B: remember who owns this order — the creation vaultId is a
+          // one-time pseudonym and will be rotated at fill/cancel.
+          recordRelayedOrder(orderId, vaultOwner);
+        }
         console.log(`[RELAY] Order created: orderId=${orderId}, tx=${tx.hash}`);
         res.json({ orderId, txHash: tx.hash });
       } catch (error: any) {
@@ -598,12 +677,15 @@ class KeeperRelayerService {
       }
     });
 
-    // Request swap execution via relayer
+    // Request swap execution via relayer.
+    // Phase B: authorization via the persisted orderId -> owner map (the
+    // creation vaultId is a rotated one-time pseudonym; `vaultId` in the body
+    // is accepted for backward compatibility but ignored).
     this.app.post('/api/relay/requestSwap', async (req, res) => {
       try {
-        const { orderId, deadline, nonce, signature, vaultId } = req.body;
+        const { orderId, deadline, nonce, signature } = req.body;
 
-        if (!orderId || !deadline || nonce === undefined || !signature || !vaultId) {
+        if (!orderId || !deadline || nonce === undefined || !signature) {
           return res.status(400).json({ error: 'Missing required fields' });
         }
         if (!validateDeadlineOrReject(deadline, res)) return;
@@ -617,13 +699,9 @@ class KeeperRelayerService {
 
         const recoveredSigner = verifyTypedData(EIP712_DOMAIN, { SwapRequest: EIP712_TYPES.SwapRequest }, message, signature);
 
-        // Verify signer owns the vaultId
-        const vaultOwner = await this.resolveVaultOwner(vaultId);
-        if (recoveredSigner.toLowerCase() !== vaultOwner.toLowerCase()) {
-          return res.status(403).json({ error: 'Signer does not own this vaultId' });
-        }
+        if (!this.authorizeOrderStep(orderId, recoveredSigner, res)) return;
 
-        if (!consumeNonceOrReject(vaultId, nonce, res)) return;
+        if (!consumeNonceOrReject(orderId, nonce, res)) return;
 
         console.log(`[RELAY] requestSwap: orderId=${orderId}`);
 
@@ -654,9 +732,9 @@ class KeeperRelayerService {
     // V2: poolFee removed — the exchange routes via its own pair registry.
     this.app.post('/api/relay/executeSwap', async (req, res) => {
       try {
-        const { orderId, amount, minAmountOut, cleartexts, decryptionProof, deadline, nonce, signature, vaultId } = req.body;
+        const { orderId, amount, minAmountOut, cleartexts, decryptionProof, deadline, nonce, signature } = req.body;
 
-        if (!orderId || !amount || minAmountOut === undefined || !cleartexts || !decryptionProof || !deadline || nonce === undefined || !signature || !vaultId) {
+        if (!orderId || !amount || minAmountOut === undefined || !cleartexts || !decryptionProof || !deadline || nonce === undefined || !signature) {
           return res.status(400).json({ error: 'Missing required fields' });
         }
         if (!validateDeadlineOrReject(deadline, res)) return;
@@ -672,12 +750,9 @@ class KeeperRelayerService {
 
         const recoveredSigner = verifyTypedData(EIP712_DOMAIN, { SwapExecution: EIP712_TYPES.SwapExecution }, message, signature);
 
-        const vaultOwner = await this.resolveVaultOwner(vaultId);
-        if (recoveredSigner.toLowerCase() !== vaultOwner.toLowerCase()) {
-          return res.status(403).json({ error: 'Signer does not own this vaultId' });
-        }
+        if (!this.authorizeOrderStep(orderId, recoveredSigner, res)) return;
 
-        if (!consumeNonceOrReject(vaultId, nonce, res)) return;
+        if (!consumeNonceOrReject(orderId, nonce, res)) return;
 
         // PRIVACY: amount deliberately not logged (see createOrder note)
         console.log(`[RELAY] executeSwap: orderId=${orderId}`);
@@ -728,9 +803,9 @@ class KeeperRelayerService {
     // Cancel order via relayer
     this.app.post('/api/relay/cancelOrder', async (req, res) => {
       try {
-        const { orderId, deadline, nonce, signature, vaultId } = req.body;
+        const { orderId, deadline, nonce, signature } = req.body;
 
-        if (!orderId || !deadline || nonce === undefined || !signature || !vaultId) {
+        if (!orderId || !deadline || nonce === undefined || !signature) {
           return res.status(400).json({ error: 'Missing required fields' });
         }
         if (!validateDeadlineOrReject(deadline, res)) return;
@@ -744,12 +819,9 @@ class KeeperRelayerService {
 
         const recoveredSigner = verifyTypedData(EIP712_DOMAIN, { CancelOrder: EIP712_TYPES.CancelOrder }, message, signature);
 
-        const vaultOwner = await this.resolveVaultOwner(vaultId);
-        if (recoveredSigner.toLowerCase() !== vaultOwner.toLowerCase()) {
-          return res.status(403).json({ error: 'Signer does not own this vaultId' });
-        }
+        if (!this.authorizeOrderStep(orderId, recoveredSigner, res)) return;
 
-        if (!consumeNonceOrReject(vaultId, nonce, res)) return;
+        if (!consumeNonceOrReject(orderId, nonce, res)) return;
 
         // Budget gate only — a cancel restores locked funds, so it stays
         // allowed per-vault, but it burns unrecoverable relayer gas.
@@ -779,9 +851,9 @@ class KeeperRelayerService {
     // Cancel swap execution via relayer
     this.app.post('/api/relay/cancelSwap', async (req, res) => {
       try {
-        const { orderId, deadline, nonce, signature, vaultId } = req.body;
+        const { orderId, deadline, nonce, signature } = req.body;
 
-        if (!orderId || !deadline || nonce === undefined || !signature || !vaultId) {
+        if (!orderId || !deadline || nonce === undefined || !signature) {
           return res.status(400).json({ error: 'Missing required fields' });
         }
         if (!validateDeadlineOrReject(deadline, res)) return;
@@ -794,12 +866,9 @@ class KeeperRelayerService {
 
         const recoveredSigner = verifyTypedData(EIP712_DOMAIN, { CancelOrder: EIP712_TYPES.CancelOrder }, message, signature);
 
-        const vaultOwner = await this.resolveVaultOwner(vaultId);
-        if (recoveredSigner.toLowerCase() !== vaultOwner.toLowerCase()) {
-          return res.status(403).json({ error: 'Signer does not own this vaultId' });
-        }
+        if (!this.authorizeOrderStep(orderId, recoveredSigner, res)) return;
 
-        if (!consumeNonceOrReject(vaultId, nonce, res)) return;
+        if (!consumeNonceOrReject(orderId, nonce, res)) return;
 
         const decision = this.policy.checkCancel();
         if (!decision.allowed) {

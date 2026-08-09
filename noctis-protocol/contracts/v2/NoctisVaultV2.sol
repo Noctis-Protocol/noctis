@@ -105,6 +105,13 @@ contract NoctisVaultV2 is ReentrancyGuard, Pausable, Ownable, GatewayCaller {
     uint256 public constant DECRYPTION_TIMEOUT = 1 hours;
     uint256 public constant RETRY_COOLDOWN = 10 minutes;
 
+    /// @dev PRIVACY (phase B): withdrawal claims are quantized to window
+    ///      boundaries so several users' payouts land together, breaking the 1:1
+    ///      fill->payout timing correlation. 0 = disabled (test/dev default);
+    ///      enabled post-deploy by the owner. Capped to keep funds liquid.
+    uint64 public withdrawalBatchWindow;
+    uint64 public constant MAX_WITHDRAWAL_BATCH_WINDOW = 1 hours;
+
     /// @dev CRITICAL-2: reject deposit fees > 1%
     uint256 public constant MAX_ACCEPTABLE_FEE_BPS = 100;
 
@@ -211,6 +218,8 @@ contract NoctisVaultV2 is ReentrancyGuard, Pausable, Ownable, GatewayCaller {
     error NoGuardianProposal();
     error GuardianChangeTooEarly(uint256 timeLeft);
     error OnlyGuardian();
+    error WithdrawalBatchPending(uint256 timeLeft);
+    error BatchWindowTooLong();
 
     // ============================================
     // EVENTS (privacy: no indexed user addresses on flow events)
@@ -241,6 +250,8 @@ contract NoctisVaultV2 is ReentrancyGuard, Pausable, Ownable, GatewayCaller {
     event ETHClaimed(address user, uint256 amount);
 
     event ExchangeAuthorized(address indexed exchange, bool status);
+
+    event WithdrawalBatchWindowUpdated(uint64 window);
 
     event GuardianProposed(address indexed newGuardian, uint256 executeAfter);
     event GuardianChanged(address indexed oldGuardian, address indexed newGuardian);
@@ -394,15 +405,33 @@ contract NoctisVaultV2 is ReentrancyGuard, Pausable, Ownable, GatewayCaller {
     ///      ROADMAP_E2E_ENCRYPTED_INTENTS.md phase B.)
     function _assignVaultIdIfNeeded(address user) private {
         if (userVaultId[user] == 0) {
-            uint256 vid;
-            do {
-                vid = uint256(
-                    keccak256(abi.encodePacked(user, block.prevrandao, address(this), ++vaultIdNonce))
-                );
-            } while (vid == 0 || vaultOwners[vid] != address(0));
-            userVaultId[user] = vid;
-            vaultOwners[vid] = user;
+            _bindFreshVaultId(user);
         }
+    }
+
+    /// @dev Draw an unused pseudo-random id and bind it to `user`
+    function _bindFreshVaultId(address user) private {
+        uint256 vid;
+        do {
+            vid = uint256(
+                keccak256(abi.encodePacked(user, block.prevrandao, address(this), ++vaultIdNonce))
+            );
+        } while (vid == 0 || vaultOwners[vid] != address(0));
+        userVaultId[user] = vid;
+        vaultOwners[vid] = user;
+    }
+
+    /// @notice PRIVACY (phase B): one-time pseudonyms. The exchange rotates a
+    ///         trader's vaultId when a relayed order reaches a terminal state
+    ///         (fill/cancel), so relayed-order calldata never shows the same
+    ///         vaultId across sequential orders — orders stop clustering by id.
+    /// @dev No event, no return value in calldata: the new id is only readable
+    ///      by the owner via getMyVaultId (or raw storage — accepted boundary).
+    function rotateVaultId(address user) external onlyExchange {
+        uint256 old = userVaultId[user];
+        if (old == 0) return;
+        delete vaultOwners[old];
+        _bindFreshVaultId(user);
     }
 
     /// @dev First credit assigns instead of FHE.add (uninitialized handle is invalid),
@@ -540,6 +569,15 @@ contract NoctisVaultV2 is ReentrancyGuard, Pausable, Ownable, GatewayCaller {
         if (request.executed) revert WithdrawalAlreadyExecuted();
         if (request.decryptionRequested) revert DecryptionAlreadyRequested();
         if (request.requester != msg.sender) revert NotWithdrawalRequester();
+
+        // PRIVACY (phase B): quantize claim timing to batch-window boundaries
+        uint256 window = withdrawalBatchWindow;
+        if (window != 0) {
+            uint256 boundary = ((request.requestTime / window) + 1) * window;
+            if (block.timestamp < boundary) {
+                revert WithdrawalBatchPending(boundary - block.timestamp);
+            }
+        }
 
         request.decryptionRequested = true;
         request.decryptionRequestTime = block.timestamp;
@@ -1062,6 +1100,13 @@ contract NoctisVaultV2 is ReentrancyGuard, Pausable, Ownable, GatewayCaller {
         if (_exchange == address(0)) revert InvalidAddress();
         authorizedExchanges[_exchange] = _status;
         emit ExchangeAuthorized(_exchange, _status);
+    }
+
+    /// @notice Configure the withdrawal batching window (0 = disabled)
+    function setWithdrawalBatchWindow(uint64 window) external onlyOwner {
+        if (window > MAX_WITHDRAWAL_BATCH_WINDOW) revert BatchWindowTooLong();
+        withdrawalBatchWindow = window;
+        emit WithdrawalBatchWindowUpdated(window);
     }
 
     /// @notice Propose a new guardian (7-day timelock; guardian can only pause)

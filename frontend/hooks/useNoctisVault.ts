@@ -23,6 +23,7 @@ import { NoctisVaultABI, ERC20ABI } from "@/lib/contracts/abi";
 import { useContractAddresses } from "@/lib/wagmi";
 import { useTransactionState } from "./useTransactionState";
 import { useFhevm } from "./useFhevm";
+import { encryptAmount128 } from "@/lib/fheEncryptClient";
 import {
   parseTokenAmount,
   formatTokenAmount,
@@ -57,7 +58,7 @@ export function useNoctisVault(options?: UseNoctisVaultOptions): UseNoctisVaultR
   const { address } = useAccount();
   const publicClient = usePublicClient();
   const { state, setPending, setConfirming, setSuccess, setFailed } = useTransactionState();
-  const { publicDecryptWithProof, createEncryptedInput, isReady: fhevmReady } = useFhevm();
+  const { publicDecryptWithProof, isReady: fhevmReady } = useFhevm();
 
   const contracts = useContractAddresses();
 
@@ -310,15 +311,19 @@ export function useNoctisVault(options?: UseNoctisVaultOptions): UseNoctisVaultR
           return requestId;
         };
 
-        // PRIVACY-FIRST: encrypt the amount client-side (never visible in calldata)
-        const encryptedInput = await createEncryptedInput(
-          contracts.vaultAddress,
-          address
-        );
-
-        if (!encryptedInput) {
+        // PRIVACY (phase B): encrypt the amount IN THE BROWSER — the plaintext
+        // never reaches our API routes or calldata. The proof binds to
+        // (vault, user) since the user is msg.sender of requestWithdrawalPrivate.
+        let encrypted: { encryptedAmount: `0x${string}`; inputProof: `0x${string}` };
+        try {
+          encrypted = await encryptAmount128(
+            contracts.vaultAddress,
+            address,
+            amountBigInt
+          );
+        } catch (encErr) {
           // Fallback: plaintext amount path (amount visible in calldata)
-          console.warn("⚠️ Client-side encryption not available, using plaintext requestWithdrawal");
+          console.warn("⚠️ Browser-side encryption unavailable, using plaintext requestWithdrawal", encErr);
           const hash = await writeContractAsync({
             abi: NoctisVaultABI,
             address: contracts.vaultAddress as `0x${string}`,
@@ -328,18 +333,6 @@ export function useNoctisVault(options?: UseNoctisVaultOptions): UseNoctisVaultR
           });
           return await submitAndExtract(hash);
         }
-
-        // V2 withdrawals are self-recipient: only the amount is encrypted
-        encryptedInput.add128(amountBigInt);
-
-        const encryptAsync = (encryptedInput as unknown as {
-          encryptAsync?: () => Promise<{ handles: string[]; inputProof: string }>;
-        }).encryptAsync;
-        if (!encryptAsync) {
-          throw new Error("encryptAsync not available on encrypted input builder");
-        }
-
-        const encrypted = await encryptAsync();
 
         setPending(
           2, 2,
@@ -353,8 +346,8 @@ export function useNoctisVault(options?: UseNoctisVaultOptions): UseNoctisVaultR
           functionName: "requestWithdrawalPrivate",
           args: [
             token.address,
-            encrypted.handles[0] as `0x${string}`, // encryptedAmount (externalEuint128)
-            encrypted.inputProof as `0x${string}`,
+            encrypted.encryptedAmount, // encryptedAmount (externalEuint128)
+            encrypted.inputProof,
           ],
           gas: 3_000_000n,
         });
@@ -380,7 +373,7 @@ export function useNoctisVault(options?: UseNoctisVaultOptions): UseNoctisVaultR
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [contracts, publicClient, writeContractAsync, address, createEncryptedInput, setPending, setConfirming, setSuccess, setFailed]
+    [contracts, publicClient, writeContractAsync, address, setPending, setConfirming, setSuccess, setFailed]
   );
 
   /**

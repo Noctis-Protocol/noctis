@@ -110,11 +110,13 @@ export function useRelayer() {
     },
   });
 
-  // Meta-tx nonces: on-chain tracking removed (dead state — the contract never incremented
-  // them, so reads always returned 0). Replay protection is the signed EIP-712 deadline;
-  // clients sign nonce = 0 to keep the typed-data shape stable.
-  const orderNonce = 0n;
-  const swapNonce = 0n;
+  // Meta-tx nonces: on-chain tracking removed (dead state — the contract never
+  // incremented them). The keeper keys its replay store on (scope, nonce), so
+  // every signed request must carry a FRESH nonce — a constant would collide
+  // across the steps of one order (requestSwap then executeSwap share the
+  // orderId scope).
+  const freshNonce = () =>
+    BigInt(Date.now()) * 1000n + BigInt(Math.floor(Math.random() * 1000));
 
   // Check relayer health on mount
   useEffect(() => {
@@ -155,7 +157,7 @@ export function useRelayer() {
     if (!relayerStatus.relayer) throw new Error('Relayer address unknown');
 
     const deadline = getDeadline();
-    const nonce = orderNonce;
+    const nonce = freshNonce();
 
     // Gas-in-kind refund: quote from relayer unless caller pinned a value
     const gasRefundWei = params.gasRefundWei ?? (await fetchGasRefundQuote());
@@ -210,20 +212,28 @@ export function useRelayer() {
       throw new Error(err.error || 'Relayer error');
     }
 
-    return res.json();
-  }, [vaultId, orderNonce, relayerStatus.available, signTypedDataAsync]);
+    const result = await res.json();
+
+    // PRIVACY (phase B): the vaultId is a one-time pseudonym — the vault
+    // rotates it when this order reaches a terminal state. Refresh eagerly so
+    // the next order signs with the current id.
+    refetchVaultId();
+
+    return result;
+  }, [vaultId, relayerStatus.available, relayerStatus.relayer, signTypedDataAsync, refetchVaultId]);
 
   /**
-   * Request swap execution via relayer
+   * Request swap execution via relayer.
+   * Phase B: authorization is by order ownership (relayer-side map) — the
+   * signature over orderId is what authenticates, not the vaultId.
    */
   const signAndRequestSwap = useCallback(async (params: {
     orderId: bigint;
   }): Promise<{ txHash: string; handles: string[] }> => {
-    if (!vaultId) throw new Error('No vaultId found');
     if (!relayerStatus.available) throw new Error('Relayer is not available');
 
     const deadline = getDeadline();
-    const nonce = swapNonce;
+    const nonce = freshNonce();
 
     const signature = await signTypedDataAsync({
       domain: EIP712_DOMAIN,
@@ -241,7 +251,6 @@ export function useRelayer() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         orderId: params.orderId.toString(),
-        vaultId: (vaultId as bigint).toString(),
         deadline: deadline.toString(),
         nonce: nonce.toString(),
         signature,
@@ -254,7 +263,7 @@ export function useRelayer() {
     }
 
     return res.json();
-  }, [vaultId, swapNonce, relayerStatus.available, signTypedDataAsync]);
+  }, [relayerStatus.available, signTypedDataAsync]);
 
   /**
    * Execute swap via relayer (with FHE decryption proof)
@@ -271,11 +280,10 @@ export function useRelayer() {
     sufficiencyHandle?: string;
     usdcNeeded?: string;
   }> => {
-    if (!vaultId) throw new Error('No vaultId found');
     if (!relayerStatus.available) throw new Error('Relayer is not available');
 
     const deadline = getDeadline();
-    const nonce = swapNonce;
+    const nonce = freshNonce();
 
     const signature = await signTypedDataAsync({
       domain: EIP712_DOMAIN,
@@ -299,7 +307,6 @@ export function useRelayer() {
         minAmountOut: params.minAmountOut.toString(),
         cleartexts: params.cleartexts,
         decryptionProof: params.decryptionProof,
-        vaultId: (vaultId as bigint).toString(),
         deadline: deadline.toString(),
         nonce: nonce.toString(),
         signature,
@@ -311,8 +318,11 @@ export function useRelayer() {
       throw new Error(err.error || 'Relayer error');
     }
 
-    return res.json();
-  }, [vaultId, swapNonce, relayerStatus.available, signTypedDataAsync]);
+    const result = await res.json();
+    // A SELL settles here — the vaultId rotates on fill
+    refetchVaultId();
+    return result;
+  }, [relayerStatus.available, signTypedDataAsync, refetchVaultId]);
 
   /**
    * Cancel order via relayer
@@ -320,11 +330,10 @@ export function useRelayer() {
   const signAndCancelOrder = useCallback(async (params: {
     orderId: bigint;
   }): Promise<{ txHash: string }> => {
-    if (!vaultId) throw new Error('No vaultId found');
     if (!relayerStatus.available) throw new Error('Relayer is not available');
 
     const deadline = getDeadline();
-    const nonce = orderNonce;
+    const nonce = freshNonce();
 
     const signature = await signTypedDataAsync({
       domain: EIP712_DOMAIN,
@@ -342,7 +351,6 @@ export function useRelayer() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         orderId: params.orderId.toString(),
-        vaultId: (vaultId as bigint).toString(),
         deadline: deadline.toString(),
         nonce: nonce.toString(),
         signature,
@@ -354,8 +362,11 @@ export function useRelayer() {
       throw new Error(err.error || 'Relayer error');
     }
 
-    return res.json();
-  }, [vaultId, orderNonce, relayerStatus.available, signTypedDataAsync]);
+    const result = await res.json();
+    // A relayed cancel is terminal — the vaultId rotates
+    refetchVaultId();
+    return result;
+  }, [relayerStatus.available, signTypedDataAsync, refetchVaultId]);
 
   return {
     // State

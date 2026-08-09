@@ -69,11 +69,6 @@ interface UseFhevmReturn {
     handles: string[],
     contractAddress: string
   ) => Promise<UserDecryptResult | null>;
-  // Client-side encryption with ZK proof (for privacy-first withdrawals)
-  createEncryptedInput: (
-    contractAddress: string,
-    userAddress: string
-  ) => Promise<EncryptedInputBuilder | null>;
 }
 
 // Cache signature + session to avoid repeated wallet popups during retries
@@ -392,97 +387,9 @@ export function useFhevm(): UseFhevmReturn {
     [instance]
   );
 
-  // Client-side encryption with ZK proof - for privacy-first withdrawals
-  // Encrypts amount and recipient BEFORE sending to contract, so they're never visible in TX data
-  const createEncryptedInput = useCallback(
-    async (
-      contractAddress: string,
-      userAddress: string
-    ): Promise<EncryptedInputBuilder | null> => {
-      try {
-        console.log("🔐 Creating encrypted input for privacy-first operation...");
-        console.log(`   Contract: ${contractAddress}`);
-        console.log(`   User: ${userAddress}`);
-
-        // Call server-side API to create encrypted inputs
-        // Server uses @zama-fhe/relayer-sdk to encrypt values and generate proof
-        const response = await fetch("/api/fhevm/encrypt", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action: "init",
-            contractAddress,
-            userAddress,
-          }),
-        });
-        
-        const data = await response.json();
-        
-        if (!data.success) {
-          throw new Error(data.error || "Failed to initialize encryption");
-        }
-
-        const sessionId = data.sessionId;
-        console.log(`   ✅ Encryption session started: ${sessionId}`);
-
-        // Return a builder that accumulates values and encrypts on finalize
-        const values: { type: string; value: string }[] = [];
-        
-        const builder: EncryptedInputBuilder = {
-          add128: (value: bigint) => {
-            values.push({ type: "uint128", value: value.toString() });
-            return builder;
-          },
-          addAddress: (addr: string) => {
-            values.push({ type: "address", value: addr });
-            return builder;
-          },
-          encrypt: () => {
-            // This is a synchronous call, but we need async encryption
-            // We'll use a workaround by returning a promise-like object
-            throw new Error("Use encryptAsync() instead - see createEncryptedInputAsync");
-          },
-        };
-
-        // Add async encrypt method
-        (builder as EncryptedInputBuilder & { encryptAsync: () => Promise<EncryptedInputResult> }).encryptAsync = async () => {
-          console.log(`   🔐 Encrypting ${values.length} values...`);
-          
-          const encryptResponse = await fetch("/api/fhevm/encrypt", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              action: "encrypt",
-              sessionId,
-              contractAddress,
-              userAddress,
-              values,
-            }),
-          });
-          
-          const encryptData = await encryptResponse.json();
-          
-          if (!encryptData.success) {
-            throw new Error(encryptData.error || "Encryption failed");
-          }
-
-          console.log(`   ✅ Encrypted successfully! Handles: ${encryptData.handles.length}`);
-          
-          return {
-            handles: encryptData.handles,
-            inputProof: encryptData.inputProof,
-          };
-        };
-
-        return builder;
-      } catch (err) {
-        console.error("Create encrypted input failed:", err);
-        setError(err instanceof Error ? err.message : "Encryption failed");
-        return null;
-      }
-    },
-    []
-  );
+  // PRIVACY (phase B): client-side FHE input encryption moved to
+  // lib/fheEncryptClient.ts (browser WASM). The old implementation routed the
+  // PLAINTEXT through /api/fhevm/encrypt — a server-side exposure point.
 
   return {
     instance,
@@ -491,6 +398,5 @@ export function useFhevm(): UseFhevmReturn {
     error,
     reencrypt,
     publicDecryptWithProof,
-    createEncryptedInput,
   };
 }
