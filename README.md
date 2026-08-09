@@ -18,17 +18,19 @@ What stays private, from whom:
 - **Vault balances — encrypted end-to-end.** Holdings live as FHE ciphertexts;
   the decryption ACL is granted to the owner only. Nobody — relayer included —
   can read a position or reconstruct balances before/after a trade.
-- **Public unlinkability.** Relayed orders are submitted by the relayer:
-  `tx.from` is the relayer, and the trader address appears in no event, no
-  public getter, no order struct. On-chain observers see *that* a swap of size
-  X happened, not *who* traded.
-- **Trusted relayer for order size.** On the gasless relayed path the signed
-  intent carries the amount and direction in cleartext, so the relayer sees
-  *who trades how much* before submitting (the size becomes public anyway at
-  Uniswap settlement — the relayer just learns it seconds earlier, plus the
-  identity link). The relayer never has custody and cannot alter the order
-  (EIP-712-signed parameters). Self-relayed orders remove this third party at
-  the cost of gas + `tx.from` exposure.
+- **Unlinkability against casual observers, not determined ones.** Relayed
+  orders are submitted by the relayer: `tx.from` is the relayer and the trader
+  address appears in no event or public getter. However, the relayed
+  transaction's **calldata carries the order amount, direction and an opaque
+  vaultId in cleartext**, and vaultIds can be correlated back to addresses
+  with effort (deposit ordering, raw storage reads). End-to-end encrypted
+  intents that close this are roadmapped —
+  see `ROADMAP_E2E_ENCRYPTED_INTENTS.md`.
+- **Trusted relayer for order size.** The signed intent carries the amount in
+  cleartext, so the relayer sees *who trades how much* before submitting (the
+  size becomes public anyway at Uniswap settlement). The relayer never has
+  custody and cannot alter the order (EIP-712-signed parameters). Self-relayed
+  orders remove this third party at the cost of gas + `tx.from` exposure.
 - **Fill size is public at settlement** — inherent to settling on Uniswap.
 
 ## Monorepo

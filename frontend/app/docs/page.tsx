@@ -381,9 +381,11 @@ export default function DocsPage() {
                       </tr>
                       <tr>
                         <td className="px-5 py-3.5">
-                          On-chain order size (FHE ciphertext, unlinkable to the trader)
+                          Stored order state (FHE ciphertexts: amount, trader)
                         </td>
-                        <td className="px-5 py-3.5">Pool sees the Exchange address</td>
+                        <td className="px-5 py-3.5">
+                          Relayed-order calldata (amount, direction, vaultId)
+                        </td>
                       </tr>
                       <tr>
                         <td className="px-5 py-3.5">
@@ -407,16 +409,18 @@ export default function DocsPage() {
                   fill after inclusion.
                 </p>
                 <p className="mt-3 max-w-[65ch] text-sm leading-relaxed text-ink-500">
-                  <strong className="font-semibold text-ink-700">The relayer
-                  is trusted with order size.</strong> On the gasless path the
-                  signed order carries the amount and direction in cleartext,
-                  so the relayer sees who trades how much before submitting —
-                  the size becomes public at the Uniswap fill anyway; what the
-                  relayer additionally learns is the identity link. It never
-                  has custody, cannot alter the signed parameters, and cannot
-                  decrypt vault balances. Self-relaying removes this party at
-                  the cost of gas and <span className="font-mono text-xs">tx.from</span>{" "}
-                  exposure.
+                  <strong className="font-semibold text-ink-700">Order size is
+                  not hidden pre-settlement on the relayed path.</strong> The
+                  signed order carries the amount and direction in cleartext:
+                  the relayer sees them, and they also appear in the relayed
+                  transaction&apos;s calldata on-chain. What stays protected is
+                  the trader link — no event, getter or{" "}
+                  <span className="font-mono text-xs">tx.from</span> names the
+                  trader, though a determined observer can correlate vaultIds
+                  with effort. The relayer never has custody, cannot alter the
+                  signed parameters, and cannot decrypt vault balances.
+                  End-to-end encrypted intents (the relayer and calldata carry
+                  only FHE handles) are on the roadmap.
                 </p>
                 <p className="mt-3 max-w-[65ch] text-sm leading-relaxed text-ink-500">
                   The desk market panel shows the selected pair&apos;s Uniswap V2
