@@ -2,6 +2,9 @@
 /**
  * @file Keeper + Relayer Service for Noctis Protocol
  * @description Privacy-first relay service + cleanup operations
+ *
+ * V2 (multi-token): targets NoctisExchangeV2/NoctisVaultV2 — orders are
+ * baseToken/USDC pairs (address(0) = native ETH), EIP-712 domain version "2".
  * 
  * ARCHITECTURE:
  * =============
@@ -33,12 +36,40 @@ dotenv.config();
 // CONFIGURATION
 // ═══════════════════════════════════════════════════════════════════════════
 
+/**
+ * SSOT fallback: noctis-protocol/deployments/sepolia.json (keys
+ * contracts.NoctisVault / contracts.NoctisExchange). At V2 cutover that file
+ * points to the V2 contracts — addresses are never hardcoded here.
+ */
+function loadSsotAddresses(): { vault: string; exchange: string } {
+  const ssotPath = path.join(
+    __dirname,
+    '..',
+    '..',
+    'noctis-protocol',
+    'deployments',
+    'sepolia.json'
+  );
+  try {
+    const ssot = JSON.parse(fs.readFileSync(ssotPath, 'utf8'));
+    return {
+      vault: ssot.contracts?.NoctisVault || '',
+      exchange: ssot.contracts?.NoctisExchange || '',
+    };
+  } catch {
+    return { vault: '', exchange: '' };
+  }
+}
+
+const SSOT_ADDRESSES = loadSsotAddresses();
+
 const CONFIG = {
   // Use Flashbots RPC for MEV protection and pre-block privacy
   rpcUrl: process.env.RPC_URL || 'https://rpc-sepolia.flashbots.net',
   privateKey: '', // filled via loadPrivateKey() below
-  vaultAddress: process.env.VAULT_ADDRESS || '',
-  exchangeAddress: process.env.EXCHANGE_ADDRESS || '',
+  // Env-first, then deployments SSOT
+  vaultAddress: process.env.VAULT_ADDRESS || SSOT_ADDRESSES.vault,
+  exchangeAddress: process.env.EXCHANGE_ADDRESS || SSOT_ADDRESSES.exchange,
   pollIntervalMs: parseInt(process.env.POLL_INTERVAL_MS || '15000'),
   relayerPort: parseInt(process.env.RELAYER_PORT || '3001'),
   gasLimit: 5_000_000n,
@@ -195,7 +226,7 @@ function rateLimitMiddleware(
 
 const EIP712_DOMAIN = {
   name: 'NoctisExchange',
-  version: '1',
+  version: '2',
   chainId: CONFIG.chainId,
   verifyingContract: CONFIG.exchangeAddress,
 };
@@ -203,7 +234,8 @@ const EIP712_DOMAIN = {
 const EIP712_TYPES = {
   CreateOrder: [
     { name: 'vaultId', type: 'uint256' },
-    { name: 'amountETH', type: 'uint128' },
+    { name: 'baseToken', type: 'address' },
+    { name: 'amountBase', type: 'uint128' },
     { name: 'isBuy', type: 'bool' },
     { name: 'slippageToleranceBPS', type: 'uint16' },
     { name: 'maxPriceDeviationBPS', type: 'uint16' },
@@ -216,11 +248,11 @@ const EIP712_TYPES = {
     { name: 'deadline', type: 'uint256' },
     { name: 'nonce', type: 'uint256' },
   ],
+  // V2: poolFee removed (executeSwapViaRelayer no longer takes it)
   SwapExecution: [
     { name: 'orderId', type: 'uint256' },
     { name: 'amount', type: 'uint128' },
     { name: 'minAmountOut', type: 'uint256' },
-    { name: 'poolFee', type: 'uint24' },
     { name: 'deadline', type: 'uint256' },
     { name: 'nonce', type: 'uint256' },
   ],
@@ -235,19 +267,20 @@ const EIP712_TYPES = {
 // ABIs
 // ═══════════════════════════════════════════════════════════════════════════
 
+// NoctisVaultV2: the keeper set was dropped (no isKeeper/initializeKeepers/
+// getKeeperCount) and there is no cleanupExpiredWithdrawal — withdrawal
+// retry/cancel are user-only (retryWithdrawalExecution / cancelWithdrawal).
 const VAULT_ABI = [
-  'function isKeeper(address) view returns (bool)',
   'function paused() view returns (bool)',
   'function getAddressByVaultId(uint256 vaultId) view returns (address)',
-  'function cleanupExpiredWithdrawal(uint256 requestId) external',
 ];
 
 const EXCHANGE_ABI = [
-  // Events
-  'event OrderCreated(uint256 indexed orderId, bool isBuy, uint256 timestamp, uint8 orderType)',
+  // Events (V2: baseToken replaces orderType — all orders are market orders)
+  'event OrderCreated(uint256 indexed orderId, address indexed baseToken, bool isBuy, uint256 timestamp)',
   'event OrderFilledSimple(uint256 indexed orderId, uint256 timestamp)',
   'event SwapDecryptionReady(uint256 indexed orderId, bytes32[] handles)',
-  'event BuySufficiencyReady(uint256 indexed orderId, bytes32 sufficiencyHandle, uint256 usdtNeeded)',
+  'event BuySufficiencyReady(uint256 indexed orderId, bytes32 sufficiencyHandle, uint256 usdcNeeded)',
   'event OrderCancelled(uint256 indexed orderId, uint256 timestamp)',
 
   // View functions
@@ -258,18 +291,19 @@ const EXCHANGE_ABI = [
   'function feeBps() view returns (uint16)',
   'function MAX_FEE_BPS() view returns (uint16)',
   'function feeRecipient() view returns (address)',
+  'function gasRecipient() view returns (address)',
   'function RELAYER_ROLE() view returns (bytes32)',
   'function hasRole(bytes32 role, address account) view returns (bool)',
-  'function getOrderPublic(uint256 orderId) view returns (bool exists, bool isBuy, uint8 status, uint256 timestamp, uint8 orderType)',
+  'function getOrderPublic(uint256 orderId) view returns (bool exists, address baseToken, bool isBuy, uint8 status, uint256 timestamp)',
   'event ProtocolFeeCollected(uint256 indexed orderId, address indexed token, uint256 feeAmount, address indexed recipient)',
 
   // Relayer functions (PRIVACY: user address NOT in calldata)
   // BUY: executeSwapViaRelayer only prepares sufficiency — user must call finalizeBuySwap
-  'function createMarketOrderViaRelayer(uint256 vaultId, uint128 amountETH, bool isBuy, uint16 slippageToleranceBPS, uint16 maxPriceDeviationBPS, uint128 gasRefundWei) external returns (uint256)',
+  'function createMarketOrderViaRelayer(uint256 vaultId, address baseToken, uint128 amountBase, bool isBuy, uint16 slippageToleranceBPS, uint16 maxPriceDeviationBPS, uint128 gasRefundWei) external returns (uint256)',
   'function maxGasRefundWei() view returns (uint128)',
   'event GasRefundCollected(uint256 indexed orderId, address indexed token, uint256 refundAmount)',
   'function requestSwapExecutionViaRelayer(uint256 orderId) external',
-  'function executeSwapViaRelayer(uint256 orderId, uint128 amount, uint256 minAmountOut, uint24 poolFee, bytes calldata cleartexts, bytes calldata decryptionProof) external',
+  'function executeSwapViaRelayer(uint256 orderId, uint128 amount, uint256 minAmountOut, bytes calldata cleartexts, bytes calldata decryptionProof) external',
   'function cancelOrderViaRelayer(uint256 orderId) external',
   'function cancelSwapExecutionViaRelayer(uint256 orderId) external',
 
@@ -283,6 +317,8 @@ class KeeperRelayerService {
   private provider: ethers.JsonRpcProvider;
   private wallet: Wallet;
   private vault: Contract;
+  /** Provider-connected vault instance for reads with a `from` override. */
+  private vaultReader: Contract;
   private exchange: Contract;
   private isRunning = false;
   private lastProcessedBlock = 0;
@@ -296,12 +332,16 @@ class KeeperRelayerService {
       throw new Error('Fatal: KEEPER_PRIVATE_KEY or PRIVATE_KEY not set');
     }
     if (!CONFIG.exchangeAddress || !CONFIG.vaultAddress) {
-      throw new Error('Fatal: VAULT_ADDRESS and EXCHANGE_ADDRESS must be set');
+      throw new Error(
+        'Fatal: VAULT_ADDRESS / EXCHANGE_ADDRESS not set and no SSOT fallback ' +
+          '(noctis-protocol/deployments/sepolia.json contracts.NoctisVault/.NoctisExchange)'
+      );
     }
 
     this.provider = new ethers.JsonRpcProvider(CONFIG.rpcUrl);
     this.wallet = new Wallet(CONFIG.privateKey, this.provider);
     this.vault = new Contract(CONFIG.vaultAddress, VAULT_ABI, this.wallet);
+    this.vaultReader = new Contract(CONFIG.vaultAddress, VAULT_ABI, this.provider);
     this.exchange = new Contract(CONFIG.exchangeAddress, EXCHANGE_ABI, this.wallet);
     this.policy = new RelayPolicy(
       loadPolicyConfigFromEnv(path.join(__dirname, '..', 'logs'))
@@ -326,6 +366,19 @@ class KeeperRelayerService {
     this.app.use(express.json({ limit: CONFIG.bodyLimit }));
     this.app.use(rateLimitMiddleware);
     this.setupRoutes();
+  }
+
+  /**
+   * Resolve a vaultId to its owner address (off-chain signature check).
+   * VaultV2 getAddressByVaultId is onlyExchange, so the eth_call impersonates
+   * the exchange via a `from` override (read-only, requires no on-chain grant).
+   * Must go through the provider-connected instance: a signer runner would
+   * reject the `from` mismatch.
+   */
+  private async resolveVaultOwner(vaultId: string | number | bigint): Promise<string> {
+    return (await this.vaultReader.getAddressByVaultId.staticCall(vaultId, {
+      from: CONFIG.exchangeAddress,
+    })) as string;
   }
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -357,6 +410,7 @@ class KeeperRelayerService {
 
       try {
         // Sequential reads — Flashbots / some RPCs reject large eth batches
+        // V2: vault has no keeper set — the isKeeper check was dropped.
         const paused = (await this.exchange.paused()) as boolean;
         const vaultPaused = (await this.vault.paused()) as boolean;
         const role = (await this.exchange.RELAYER_ROLE()) as string;
@@ -364,23 +418,22 @@ class KeeperRelayerService {
           role,
           this.wallet.address
         )) as boolean;
-        const isVaultKeeper = (await this.vault.isKeeper(
-          this.wallet.address
-        )) as boolean;
         const feeRecipient = (await this.exchange.feeRecipient()) as string;
+        // V2: gasRecipient receives gas-in-kind refunds at settlement
+        // (relayer float wallet) — reported for ops visibility.
+        const gasRecipient = (await this.exchange.gasRecipient()) as string;
         const balance = await this.provider.getBalance(this.wallet.address);
 
         checks.exchangePaused = paused;
         checks.vaultPaused = vaultPaused;
         checks.hasRelayerRole = hasRelayer;
-        checks.isVaultKeeper = isVaultKeeper;
         checks.feeRecipient = feeRecipient;
+        checks.gasRecipient = gasRecipient;
         checks.keeperEth = formatEther(balance);
 
         if (paused) failures.push('exchange_paused');
         if (vaultPaused) failures.push('vault_paused');
         if (!hasRelayer) failures.push('missing_relayer_role');
-        if (!isVaultKeeper) failures.push('not_vault_keeper');
         if (balance < minEth) failures.push('low_keeper_eth');
         if (
           expectedFee &&
@@ -432,14 +485,19 @@ class KeeperRelayerService {
       }
     });
 
-    // Create order via relayer
+    // Create order via relayer (V2: multi-token — baseToken/USDC pair)
     this.app.post('/api/relay/createOrder', async (req, res) => {
       try {
-        const { vaultId, amountETH, isBuy, slippageBPS, maxDeviationBPS, gasRefundWei, deadline, nonce, signature } = req.body;
+        const { vaultId, baseToken, amountBase, isBuy, slippageBPS, maxDeviationBPS, gasRefundWei, deadline, nonce, signature } = req.body;
 
         // Validate required fields
-        if (!vaultId || !amountETH || slippageBPS === undefined || !deadline || nonce === undefined || !signature) {
+        if (!vaultId || baseToken === undefined || !amountBase || slippageBPS === undefined || !deadline || nonce === undefined || !signature) {
           return res.status(400).json({ error: 'Missing required fields' });
+        }
+
+        // baseToken must be a valid address (address(0) = native ETH is allowed)
+        if (typeof baseToken !== 'string' || !ethers.isAddress(baseToken)) {
+          return res.status(400).json({ error: 'Invalid baseToken address' });
         }
 
         if (!validateDeadlineOrReject(deadline, res)) return;
@@ -465,7 +523,8 @@ class KeeperRelayerService {
         // Verify EIP-712 signature OFF-CHAIN
         const message = {
           vaultId: BigInt(vaultId),
-          amountETH: BigInt(amountETH),
+          baseToken: ethers.getAddress(baseToken),
+          amountBase: BigInt(amountBase),
           isBuy: Boolean(isBuy),
           slippageToleranceBPS: Number(slippageBPS),
           maxPriceDeviationBPS: Number(maxDeviationBPS),
@@ -477,19 +536,20 @@ class KeeperRelayerService {
         const recoveredSigner = verifyTypedData(EIP712_DOMAIN, { CreateOrder: EIP712_TYPES.CreateOrder }, message, signature);
 
         // Verify signer owns the vaultId
-        const vaultOwner = await this.vault.getAddressByVaultId(vaultId);
+        const vaultOwner = await this.resolveVaultOwner(vaultId);
         if (recoveredSigner.toLowerCase() !== vaultOwner.toLowerCase()) {
           return res.status(403).json({ error: 'Signer does not own this vaultId' });
         }
 
         if (!consumeNonceOrReject(vaultId, nonce, res)) return;
 
-        console.log(`[RELAY] createOrder: vaultId=${vaultId}, amountETH=${amountETH}, isBuy=${isBuy}, gasRefundWei=${refundWei}`);
+        console.log(`[RELAY] createOrder: vaultId=${vaultId}, baseToken=${baseToken}, amountBase=${amountBase}, isBuy=${isBuy}, gasRefundWei=${refundWei}`);
 
         // Submit transaction (relayer is tx.from, NOT the user)
         const tx = await this.exchange.createMarketOrderViaRelayer(
           vaultId,
-          amountETH,
+          baseToken,
+          amountBase,
           isBuy,
           slippageBPS,
           maxDeviationBPS,
@@ -540,7 +600,7 @@ class KeeperRelayerService {
         const recoveredSigner = verifyTypedData(EIP712_DOMAIN, { SwapRequest: EIP712_TYPES.SwapRequest }, message, signature);
 
         // Verify signer owns the vaultId
-        const vaultOwner = await this.vault.getAddressByVaultId(vaultId);
+        const vaultOwner = await this.resolveVaultOwner(vaultId);
         if (recoveredSigner.toLowerCase() !== vaultOwner.toLowerCase()) {
           return res.status(403).json({ error: 'Signer does not own this vaultId' });
         }
@@ -572,10 +632,11 @@ class KeeperRelayerService {
       }
     });
 
-    // Execute swap via relayer (with FHE decryption proof)
+    // Execute swap via relayer (with FHE decryption proof).
+    // V2: poolFee removed — the exchange routes via its own pair registry.
     this.app.post('/api/relay/executeSwap', async (req, res) => {
       try {
-        const { orderId, amount, minAmountOut, poolFee, cleartexts, decryptionProof, deadline, nonce, signature, vaultId } = req.body;
+        const { orderId, amount, minAmountOut, cleartexts, decryptionProof, deadline, nonce, signature, vaultId } = req.body;
 
         if (!orderId || !amount || minAmountOut === undefined || !cleartexts || !decryptionProof || !deadline || nonce === undefined || !signature || !vaultId) {
           return res.status(400).json({ error: 'Missing required fields' });
@@ -587,14 +648,13 @@ class KeeperRelayerService {
           orderId: BigInt(orderId),
           amount: BigInt(amount),
           minAmountOut: BigInt(minAmountOut),
-          poolFee: Number(poolFee || 3000),
           deadline: BigInt(deadline),
           nonce: BigInt(nonce),
         };
 
         const recoveredSigner = verifyTypedData(EIP712_DOMAIN, { SwapExecution: EIP712_TYPES.SwapExecution }, message, signature);
 
-        const vaultOwner = await this.vault.getAddressByVaultId(vaultId);
+        const vaultOwner = await this.resolveVaultOwner(vaultId);
         if (recoveredSigner.toLowerCase() !== vaultOwner.toLowerCase()) {
           return res.status(403).json({ error: 'Signer does not own this vaultId' });
         }
@@ -607,7 +667,6 @@ class KeeperRelayerService {
           orderId,
           amount,
           minAmountOut,
-          poolFee || 3000,
           cleartexts,
           decryptionProof,
           { gasLimit: CONFIG.gasLimit }
@@ -618,15 +677,15 @@ class KeeperRelayerService {
         // Terminal for policy purposes: SELL settles here (refund skimmed);
         // BUY refund is skimmed in the user-paid finalizeBuySwap.
         this.policy.noteSettled(String(orderId));
-        // BUY: this call only prepares USDT sufficiency; UI must call finalizeBuySwap as the user
+        // BUY: this call only prepares USDC sufficiency; UI must call finalizeBuySwap as the user
         let buySufficiencyHandle: string | undefined;
-        let usdtNeeded: string | undefined;
+        let usdcNeeded: string | undefined;
         for (const log of receipt.logs) {
           try {
             const parsed = this.exchange.interface.parseLog({ topics: [...log.topics], data: log.data });
             if (parsed?.name === 'BuySufficiencyReady') {
               buySufficiencyHandle = parsed.args.sufficiencyHandle;
-              usdtNeeded = parsed.args.usdtNeeded?.toString?.();
+              usdcNeeded = parsed.args.usdcNeeded?.toString?.();
             }
           } catch { /* skip */ }
         }
@@ -636,7 +695,7 @@ class KeeperRelayerService {
           txHash: tx.hash,
           buyPrepared: Boolean(buySufficiencyHandle),
           sufficiencyHandle: buySufficiencyHandle,
-          usdtNeeded,
+          usdcNeeded,
           note: buySufficiencyHandle
             ? 'BUY step1 done — user must call finalizeBuySwap'
             : undefined,
@@ -666,7 +725,7 @@ class KeeperRelayerService {
 
         const recoveredSigner = verifyTypedData(EIP712_DOMAIN, { CancelOrder: EIP712_TYPES.CancelOrder }, message, signature);
 
-        const vaultOwner = await this.vault.getAddressByVaultId(vaultId);
+        const vaultOwner = await this.resolveVaultOwner(vaultId);
         if (recoveredSigner.toLowerCase() !== vaultOwner.toLowerCase()) {
           return res.status(403).json({ error: 'Signer does not own this vaultId' });
         }
@@ -716,7 +775,7 @@ class KeeperRelayerService {
 
         const recoveredSigner = verifyTypedData(EIP712_DOMAIN, { CancelOrder: EIP712_TYPES.CancelOrder }, message, signature);
 
-        const vaultOwner = await this.vault.getAddressByVaultId(vaultId);
+        const vaultOwner = await this.resolveVaultOwner(vaultId);
         if (recoveredSigner.toLowerCase() !== vaultOwner.toLowerCase()) {
           return res.status(403).json({ error: 'Signer does not own this vaultId' });
         }
@@ -851,9 +910,9 @@ class KeeperRelayerService {
       const orderEvents = await this.exchange.queryFilter('OrderCreated', fromBlock, toBlock);
       for (const event of orderEvents) {
         if (!(event instanceof ethers.EventLog)) continue;
-        const { orderId, isBuy, orderType } = event.args;
-        const typeLabel = orderType === 0 ? 'MARKET' : 'LIMIT';
-        console.log(`[${this.ts()}] 📊 New ${typeLabel} Order #${orderId} (${isBuy ? 'BUY' : 'SELL'})`);
+        // V2: no orderType (market-only); baseToken identifies the pair
+        const { orderId, baseToken, isBuy } = event.args;
+        console.log(`[${this.ts()}] 📊 New Order #${orderId} (${isBuy ? 'BUY' : 'SELL'} ${baseToken}/USDC)`);
       }
 
       // Monitor swap decryption requests

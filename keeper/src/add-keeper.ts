@@ -2,6 +2,9 @@
 /**
  * @file Add keeper to NoctisVault
  * @description Adds a keeper using the 2-step timelock pattern
+ *
+ * V1 ONLY: NoctisVaultV2 has no keeper set (isKeeper/proposeAddKeeperV2/
+ * getKeeperCount were removed). Do not run this script against a V2 vault.
  * 
  * Usage:
  *   npx ts-node src/add-keeper.ts

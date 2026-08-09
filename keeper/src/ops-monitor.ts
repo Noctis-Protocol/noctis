@@ -67,7 +67,8 @@ function loadSsotDefaults() {
     if (!CONFIG.expectedRelayer && ssot.ops?.relayer) {
       CONFIG.expectedRelayer = ssot.ops.relayer;
     }
-    if (!CONFIG.usdc) CONFIG.usdc = ssot.contracts.USDT;
+    // V2 SSOT uses "USDC"; older files used "USDT" for the same Circle token
+    if (!CONFIG.usdc) CONFIG.usdc = ssot.contracts.USDC || ssot.contracts.USDT;
   } catch {
     /* ignore */
   }
@@ -186,9 +187,10 @@ async function checkOnchain(): Promise<CheckResult> {
     ],
     provider
   );
+  // V2: vault has no keeper set (isKeeper was removed) — paused() only
   const vault = new ethers.Contract(
     CONFIG.vault,
-    ['function paused() view returns (bool)', 'function isKeeper(address) view returns (bool)'],
+    ['function paused() view returns (bool)'],
     provider
   );
 
@@ -226,13 +228,10 @@ async function checkOnchain(): Promise<CheckResult> {
     if (relayer) {
       details.relayer = relayer;
       const hasRole = (await exchange.hasRole(role, relayer)) as boolean;
-      const isKeeper = (await vault.isKeeper(relayer)) as boolean;
       const bal = await provider.getBalance(relayer);
       details.hasRelayerRole = hasRole;
-      details.isVaultKeeper = isKeeper;
       details.keeperEth = formatEther(bal);
       if (!hasRole) failures.push('missing_relayer_role');
-      if (!isKeeper) failures.push('not_vault_keeper');
       if (bal < ethers.parseEther(CONFIG.minKeeperEth)) failures.push('low_keeper_eth');
     } else {
       failures.push('relayer_address_unknown');
