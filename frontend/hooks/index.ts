@@ -15,7 +15,7 @@ export { useBalanceDecryption } from "./useBalanceDecryption";
 export { useTradeHistoryDecryption } from "./useTradeHistoryDecryption";
 export { useWithdrawalStatus, formatTimeRemaining } from "./useWithdrawalStatus";
 export { useEthPrice } from "./useEthPrice";
-export { useEthChart } from "./useEthChart";
+export { useEthChart, usePairChart } from "./useEthChart";
 export { usePoolDepth } from "./usePoolDepth";
 export {
   useUniswapPairLive,

@@ -1,5 +1,6 @@
 /**
- * Live Uniswap V2 WETH/USDC pair — one Sync subscription for the whole desk.
+ * Live Uniswap V2 base/USDC pair — one Sync subscription for the whole desk.
+ * Token-aware: the provider follows the selected base token (native ETH = WETH leg).
  */
 
 "use client";
@@ -21,7 +22,7 @@ import {
   useBlockNumber,
   useChainId,
 } from "wagmi";
-import { formatEther, formatUnits, type Address } from "viem";
+import { formatUnits, zeroAddress, type Address } from "viem";
 import {
   UNISWAP_FACTORY_ABI,
   UNISWAP_PAIR_ABI,
@@ -36,7 +37,7 @@ import {
   WETH_MAINNET,
 } from "@/lib/uniswapMainnet";
 
-function pairTokens(chainId: number | undefined) {
+function deskTokens(chainId: number | undefined) {
   if (chainId === 1) {
     return {
       router: UNISWAP_V2_ROUTER_MAINNET as Address,
@@ -63,10 +64,27 @@ const PAIR_LIVE_ABI = [
   },
 ] as const;
 
+/** Base token the desk pair follows (address(0) = native ETH → WETH pool leg). */
+export type PairLiveBase = {
+  address: Address;
+  decimals: number;
+  symbol: string;
+};
+
+const DEFAULT_BASE: PairLiveBase = {
+  address: zeroAddress,
+  decimals: 18,
+  symbol: "ETH",
+};
+
 export type UniswapPairLive = {
   pair: Address | null;
+  /** Pool leg used for the base side (WETH for native ETH) */
+  baseLeg: Address;
+  baseDecimals: number;
+  baseSymbol: string;
   midPrice: number | null;
-  reserveEth: number | null;
+  reserveBase: number | null;
   reserveUsdc: number | null;
   tick: number;
   lastSyncAt: number | null;
@@ -76,8 +94,11 @@ export type UniswapPairLive = {
 
 const EMPTY: UniswapPairLive = {
   pair: null,
+  baseLeg: WETH as Address,
+  baseDecimals: 18,
+  baseSymbol: "ETH",
   midPrice: null,
-  reserveEth: null,
+  reserveBase: null,
   reserveUsdc: null,
   tick: 0,
   lastSyncAt: null,
@@ -91,36 +112,44 @@ function midFromReserves(
   reserve0: bigint,
   reserve1: bigint,
   token0: Address,
-  weth: Address
+  baseLeg: Address,
+  baseDecimals: number
 ): {
   midPrice: number;
-  reserveEth: number;
+  reserveBase: number;
   reserveUsdc: number;
 } | null {
-  const wethIs0 = token0.toLowerCase() === weth.toLowerCase();
-  const reserveEth = Number(formatEther(wethIs0 ? reserve0 : reserve1));
-  const reserveUsdc = Number(
-    formatUnits(wethIs0 ? reserve1 : reserve0, 6)
+  const baseIs0 = token0.toLowerCase() === baseLeg.toLowerCase();
+  const reserveBase = Number(
+    formatUnits(baseIs0 ? reserve0 : reserve1, baseDecimals)
   );
-  if (!(reserveEth > 0) || !(reserveUsdc > 0)) return null;
+  const reserveUsdc = Number(formatUnits(baseIs0 ? reserve1 : reserve0, 6));
+  if (!(reserveBase > 0) || !(reserveUsdc > 0)) return null;
   return {
-    midPrice: reserveUsdc / reserveEth,
-    reserveEth,
+    midPrice: reserveUsdc / reserveBase,
+    reserveBase,
     reserveUsdc,
   };
 }
 
-function useUniswapPairLiveState(): UniswapPairLive {
+function useUniswapPairLiveState(base: PairLiveBase): UniswapPairLive {
   const publicClient = usePublicClient();
   const chainId = useChainId();
-  const tokens = pairTokens(chainId);
-  const wethRef = useRef(tokens.weth);
-  wethRef.current = tokens.weth;
+  const tokens = deskTokens(chainId);
+
+  const isNative = base.address.toLowerCase() === zeroAddress;
+  const baseLeg = isNative ? tokens.weth : base.address;
+  const baseDecimals = isNative ? 18 : base.decimals;
+
+  const baseLegRef = useRef(baseLeg);
+  baseLegRef.current = baseLeg;
+  const baseDecimalsRef = useRef(baseDecimals);
+  baseDecimalsRef.current = baseDecimals;
 
   const [pair, setPair] = useState<Address | null>(null);
   const [token0, setToken0] = useState<Address | null>(null);
   const [midPrice, setMidPrice] = useState<number | null>(null);
-  const [reserveEth, setReserveEth] = useState<number | null>(null);
+  const [reserveBase, setReserveBase] = useState<number | null>(null);
   const [reserveUsdc, setReserveUsdc] = useState<number | null>(null);
   const [tick, setTick] = useState(0);
   const [lastSyncAt, setLastSyncAt] = useState<number | null>(null);
@@ -136,9 +165,11 @@ function useUniswapPairLiveState(): UniswapPairLive {
     setPair(null);
     setToken0(null);
     setMidPrice(null);
+    setReserveBase(null);
+    setReserveUsdc(null);
     (async () => {
       try {
-        const { router, weth, usdc } = pairTokens(chainId);
+        const { router, usdc } = deskTokens(chainId);
         const factory = (await publicClient.readContract({
           address: router,
           abi: UNISWAP_ROUTER_ABI,
@@ -148,10 +179,10 @@ function useUniswapPairLiveState(): UniswapPairLive {
           address: factory,
           abi: UNISWAP_FACTORY_ABI,
           functionName: "getPair",
-          args: [weth, usdc],
+          args: [baseLeg, usdc],
         })) as Address;
         if (!p || p === "0x0000000000000000000000000000000000000000") {
-          throw new Error("ETH/USDC pair not found");
+          throw new Error(`${base.symbol}/USDC pair not found`);
         }
         const t0 = (await publicClient.readContract({
           address: p,
@@ -172,14 +203,20 @@ function useUniswapPairLiveState(): UniswapPairLive {
     return () => {
       cancelled = true;
     };
-  }, [publicClient, chainId]);
+  }, [publicClient, chainId, baseLeg, base.symbol]);
 
   const applyReserves = useCallback(
     (r0: bigint, r1: bigint, t0: Address) => {
-      const m = midFromReserves(r0, r1, t0, wethRef.current);
+      const m = midFromReserves(
+        r0,
+        r1,
+        t0,
+        baseLegRef.current,
+        baseDecimalsRef.current
+      );
       if (!m) return;
       setMidPrice(m.midPrice);
-      setReserveEth(m.reserveEth);
+      setReserveBase(m.reserveBase);
       setReserveUsdc(m.reserveUsdc);
       setLastSyncAt(Date.now());
       setTick((n) => n + 1);
@@ -237,8 +274,11 @@ function useUniswapPairLiveState(): UniswapPairLive {
   return useMemo(
     () => ({
       pair,
+      baseLeg,
+      baseDecimals,
+      baseSymbol: base.symbol,
       midPrice,
-      reserveEth,
+      reserveBase,
       reserveUsdc,
       tick,
       lastSyncAt,
@@ -247,8 +287,11 @@ function useUniswapPairLiveState(): UniswapPairLive {
     }),
     [
       pair,
+      baseLeg,
+      baseDecimals,
+      base.symbol,
       midPrice,
-      reserveEth,
+      reserveBase,
       reserveUsdc,
       tick,
       lastSyncAt,
@@ -257,8 +300,15 @@ function useUniswapPairLiveState(): UniswapPairLive {
   );
 }
 
-export function UniswapPairLiveProvider({ children }: { children: ReactNode }) {
-  const value = useUniswapPairLiveState();
+export function UniswapPairLiveProvider({
+  base,
+  children,
+}: {
+  /** Selected base token; defaults to native ETH */
+  base?: PairLiveBase | null;
+  children: ReactNode;
+}) {
+  const value = useUniswapPairLiveState(base ?? DEFAULT_BASE);
   return createElement(UniswapPairLiveContext.Provider, { value }, children);
 }
 

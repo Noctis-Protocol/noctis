@@ -17,6 +17,7 @@ import { PairMarketPanel } from "@/components/market/PairMarketPanel";
 import { DepositModal } from "@/components/vault/DepositModal";
 import { WithdrawModal } from "@/components/vault/WithdrawModal";
 import { UniswapPairLiveProvider } from "@/hooks/useUniswapPairLive";
+import { useTokenRegistry } from "@/hooks/useTokenRegistry";
 import { getDeskNetwork } from "@/lib/networks";
 import { useContractAddresses } from "@/lib/wagmi";
 
@@ -27,6 +28,14 @@ export default function Home() {
   const { switchChain } = useSwitchChain();
   const contracts = useContractAddresses();
   const deskNet = getDeskNetwork(chainId);
+
+  // Desk-wide pair selection: SwapCard drives it, chart + depth follow
+  const { tradableTokens } = useTokenRegistry();
+  const [baseAddress, setBaseAddress] = useState<string | null>(null);
+  const baseToken =
+    tradableTokens.find(
+      (t) => t.address.toLowerCase() === baseAddress?.toLowerCase()
+    ) ?? tradableTokens[0] ?? null;
   const wrongOrUnready =
     isConnected &&
     (!deskNet || !deskNet.live || !contracts.configured);
@@ -81,13 +90,16 @@ export default function Home() {
             </p>
           </section>
 
-          <UniswapPairLiveProvider>
+          <UniswapPairLiveProvider base={baseToken}>
             <PairMarketPanel />
 
             {/* Primary interaction: swap + vault side panel */}
             <section className="mt-10 grid items-start gap-8 lg:grid-cols-[minmax(0,1fr)_340px] lg:gap-10">
               <div className="mx-auto w-full max-w-md animate-fade-up [animation-delay:80ms] lg:mx-0 lg:max-w-none">
-                <SwapCard />
+                <SwapCard
+                  baseAddress={baseToken?.address ?? null}
+                  onBaseAddressChange={setBaseAddress}
+                />
                 <div className="mt-4 flex gap-3 lg:hidden">
                   <button
                     type="button"

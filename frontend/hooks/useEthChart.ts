@@ -1,10 +1,12 @@
 /**
  * Uniswap V2 pool chart — history from API, live tip from Sync events.
+ * Token-aware: pass the pool's base leg (WETH for native ETH).
  */
 
 "use client";
 
 import { useEffect, useState } from "react";
+import type { Address } from "viem";
 import { useUniswapPairLive } from "./useUniswapPairLive";
 
 export type ChartRange = "15m" | "1h" | "4h" | "1d" | "7d" | "30d";
@@ -28,12 +30,18 @@ function trimToRange(points: ChartPoint[], range: ChartRange): ChartPoint[] {
   return points.filter((p) => p.t >= cutoff);
 }
 
-export function useEthChart(range: ChartRange = "4h") {
+export function usePairChart(range: ChartRange = "4h", baseLeg?: Address) {
   const live = useUniswapPairLive();
+  const effectiveBase = baseLeg ?? live.baseLeg;
   const [points, setPoints] = useState<ChartPoint[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [source, setSource] = useState<string | null>(null);
+
+  // Drop stale series when the pair changes
+  useEffect(() => {
+    setPoints([]);
+  }, [effectiveBase]);
 
   // Historical bootstrap + slow repair
   useEffect(() => {
@@ -42,9 +50,9 @@ export function useEthChart(range: ChartRange = "4h") {
     setError(null);
     async function load() {
       try {
-        const res = await fetch(
-          `/api/market/eth-chart?range=${encodeURIComponent(range)}`
-        );
+        const params = new URLSearchParams({ range });
+        if (effectiveBase) params.set("base", effectiveBase);
+        const res = await fetch(`/api/market/eth-chart?${params.toString()}`);
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "chart failed");
         const next = (data.prices || []) as ChartPoint[];
@@ -72,7 +80,7 @@ export function useEthChart(range: ChartRange = "4h") {
       cancelled = true;
       clearInterval(id);
     };
-  }, [range]);
+  }, [range, effectiveBase]);
 
   // Live tip on Sync / heartbeat
   useEffect(() => {
@@ -105,3 +113,6 @@ export function useEthChart(range: ChartRange = "4h") {
     live: live.isReady,
   };
 }
+
+/** @deprecated use usePairChart — kept for compatibility */
+export const useEthChart = usePairChart;

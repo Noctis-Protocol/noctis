@@ -1,43 +1,49 @@
 /**
  * Uniswap V2 AMM depth ladder — refreshes on every pool Sync (live).
+ * Token-aware: sizes are fractions of the base reserve of the selected pair.
  */
 
 "use client";
 
 import { useEffect, useRef, useState } from "react";
 import { useChainId, usePublicClient } from "wagmi";
-import { formatEther, parseEther, parseUnits, type Address } from "viem";
+import { formatUnits, parseUnits, type Address } from "viem";
 import {
-  DEPTH_ETH_SIZES,
   UNISWAP_ROUTER_ABI,
   UNISWAP_V2_ROUTER,
   USDC,
-  WETH,
 } from "@/lib/uniswapSepolia";
 import {
   UNISWAP_V2_ROUTER_MAINNET,
   USDC_MAINNET,
-  WETH_MAINNET,
 } from "@/lib/uniswapMainnet";
 import { useUniswapPairLive } from "./useUniswapPairLive";
 
-function deskPair(chainId: number) {
+function deskQuote(chainId: number) {
   if (chainId === 1) {
     return {
       router: UNISWAP_V2_ROUTER_MAINNET as Address,
-      weth: WETH_MAINNET as Address,
       usdc: USDC_MAINNET as Address,
     };
   }
   return {
     router: UNISWAP_V2_ROUTER as Address,
-    weth: WETH as Address,
     usdc: USDC as Address,
   };
 }
 
+/** Ladder rungs as fractions of the pool's base reserve. */
+const DEPTH_RESERVE_FRACTIONS = [0.002, 0.005, 0.01, 0.025, 0.05, 0.1] as const;
+
+/** Round to 2 significant digits so the ladder reads cleanly across decimals. */
+function niceSize(x: number): number {
+  if (x <= 0) return 0;
+  const mag = 10 ** Math.floor(Math.log10(x));
+  return Math.round((x / mag) * 2) / 2 * mag;
+}
+
 export interface DepthLevel {
-  sizeEth: number;
+  sizeBase: number;
   price: number;
   amountOut: number;
   impactPct: number;
@@ -48,8 +54,9 @@ export interface PoolDepthState {
   spreadBps: number | null;
   bestAsk: number | null;
   bestBid: number | null;
-  reserveEth: number | null;
+  reserveBase: number | null;
   reserveUsdc: number | null;
+  baseSymbol: string;
   asks: DepthLevel[];
   bids: DepthLevel[];
   isLoading: boolean;
@@ -70,9 +77,25 @@ export function usePoolDepth(): PoolDepthState {
   const [error, setError] = useState<string | null>(null);
   const throttleRef = useRef(0);
   const inflightRef = useRef(false);
+  const pairRef = useRef<string | null>(null);
+
+  // Reset the ladder when the selected pair changes
+  useEffect(() => {
+    if (pairRef.current !== live.pair) {
+      pairRef.current = live.pair;
+      setAsks([]);
+      setBids([]);
+      setSpreadBps(null);
+      setBestAsk(null);
+      setBestBid(null);
+      setIsLoading(true);
+      setError(null);
+      throttleRef.current = 0;
+    }
+  }, [live.pair]);
 
   useEffect(() => {
-    if (!publicClient || live.midPrice == null || live.reserveEth == null) {
+    if (!publicClient || live.midPrice == null || live.reserveBase == null) {
       return;
     }
 
@@ -83,9 +106,15 @@ export function usePoolDepth(): PoolDepthState {
     throttleRef.current = now;
 
     const midPrice = live.midPrice;
-    const reserveEth = live.reserveEth;
+    const reserveBase = live.reserveBase;
     const reserveUsdc = live.reserveUsdc ?? 0;
-    const { router, weth, usdc } = deskPair(chainId);
+    const baseLeg = live.baseLeg;
+    const baseDecimals = live.baseDecimals;
+    const { router, usdc } = deskQuote(chainId);
+
+    const sizes = DEPTH_RESERVE_FRACTIONS.map((f) =>
+      niceSize(reserveBase * f)
+    ).filter((s, i, arr) => s > 0 && arr.indexOf(s) === i);
 
     let cancelled = false;
     inflightRef.current = true;
@@ -93,19 +122,22 @@ export function usePoolDepth(): PoolDepthState {
     (async () => {
       try {
         const nextBids: DepthLevel[] = [];
-        for (const size of DEPTH_ETH_SIZES) {
-          if (size >= reserveEth * 0.95) continue;
+        for (const size of sizes) {
+          if (size >= reserveBase * 0.95) continue;
           try {
             const amounts = (await publicClient.readContract({
               address: router,
               abi: UNISWAP_ROUTER_ABI,
               functionName: "getAmountsOut",
-              args: [parseEther(String(size)), [weth, usdc]],
+              args: [
+                parseUnits(size.toFixed(baseDecimals), baseDecimals),
+                [baseLeg, usdc],
+              ],
             })) as bigint[];
-            const usdcOut = Number(amounts[1]) / 1e6;
+            const usdcOut = Number(formatUnits(amounts[1], 6));
             const price = usdcOut / size;
             nextBids.push({
-              sizeEth: size,
+              sizeBase: size,
               price,
               amountOut: usdcOut,
               impactPct: Math.max(0, ((midPrice - price) / midPrice) * 100),
@@ -116,7 +148,7 @@ export function usePoolDepth(): PoolDepthState {
         }
 
         const nextAsks: DepthLevel[] = [];
-        for (const size of DEPTH_ETH_SIZES) {
+        for (const size of sizes) {
           const usdcIn = midPrice * size;
           if (usdcIn >= reserveUsdc * 0.95) continue;
           try {
@@ -124,15 +156,15 @@ export function usePoolDepth(): PoolDepthState {
               address: router,
               abi: UNISWAP_ROUTER_ABI,
               functionName: "getAmountsOut",
-              args: [parseUnits(usdcIn.toFixed(6), 6), [usdc, weth]],
+              args: [parseUnits(usdcIn.toFixed(6), 6), [usdc, baseLeg]],
             })) as bigint[];
-            const ethOut = Number(formatEther(amounts[1]));
-            if (ethOut <= 0) continue;
-            const price = usdcIn / ethOut;
+            const baseOut = Number(formatUnits(amounts[1], baseDecimals));
+            if (baseOut <= 0) continue;
+            const price = usdcIn / baseOut;
             nextAsks.push({
-              sizeEth: size,
+              sizeBase: size,
               price,
-              amountOut: ethOut,
+              amountOut: baseOut,
               impactPct: Math.max(0, ((price - midPrice) / midPrice) * 100),
             });
           } catch {
@@ -146,9 +178,7 @@ export function usePoolDepth(): PoolDepthState {
         const ba = nextAsks.length ? nextAsks[nextAsks.length - 1].price : null;
         const bb = nextBids.length ? nextBids[0].price : null;
         const spr =
-          ba != null && bb != null
-            ? ((ba - bb) / midPrice) * 10_000
-            : null;
+          ba != null && bb != null ? ((ba - bb) / midPrice) * 10_000 : null;
 
         if (!cancelled) {
           setAsks(nextAsks);
@@ -178,8 +208,10 @@ export function usePoolDepth(): PoolDepthState {
     chainId,
     live.tick,
     live.midPrice,
-    live.reserveEth,
+    live.reserveBase,
     live.reserveUsdc,
+    live.baseLeg,
+    live.baseDecimals,
   ]);
 
   useEffect(() => {
@@ -191,8 +223,9 @@ export function usePoolDepth(): PoolDepthState {
     spreadBps,
     bestAsk,
     bestBid,
-    reserveEth: live.reserveEth,
+    reserveBase: live.reserveBase,
     reserveUsdc: live.reserveUsdc,
+    baseSymbol: live.baseSymbol,
     asks,
     bids,
     isLoading: isLoading && asks.length === 0,

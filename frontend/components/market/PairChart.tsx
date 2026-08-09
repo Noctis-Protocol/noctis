@@ -12,9 +12,17 @@ import {
   type Time,
   type UTCTimestamp,
 } from "lightweight-charts";
-import { useEthChart, type ChartPoint, type ChartRange } from "@/hooks/useEthChart";
-import { useEthPrice } from "@/hooks/useEthPrice";
+import { usePairChart, type ChartPoint, type ChartRange } from "@/hooks/useEthChart";
+import { useUniswapPairLive } from "@/hooks/useUniswapPairLive";
 import { cn } from "@/lib/utils";
+
+/** Adaptive decimals: sub-$10 pairs (nDAI, nEUR) need more precision. */
+function priceDigits(p: number | null | undefined): number {
+  if (p == null || p <= 0) return 2;
+  if (p < 10) return 4;
+  if (p < 1000) return 2;
+  return 2;
+}
 
 type ChartStyle = "line" | "candle";
 
@@ -98,8 +106,10 @@ function toCandleData(points: ChartPoint[], bucketSec: number) {
 export function PairChart({ className }: { className?: string }) {
   const [range, setRange] = useState<ChartRange>("4h");
   const [style, setStyle] = useState<ChartStyle>("line");
-  const { points, isLoading, error, source, live } = useEthChart(range);
-  const { ethPrice, isLoading: midLoading } = useEthPrice();
+  const pairLive = useUniswapPairLive();
+  const { points, isLoading, error, source, live } = usePairChart(range);
+  const midPrice = pairLive.midPrice ?? 0;
+  const midLoading = !pairLive.isReady;
 
   const hostRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -124,7 +134,7 @@ export function PairChart({ className }: { className?: string }) {
     return { changePct, minP, maxP, up: changePct >= 0 };
   }, [points]);
 
-  const displayPrice = hover?.price ?? ethPrice;
+  const displayPrice = hover?.price ?? midPrice;
   const displayChange = useMemo(() => {
     if (!hover || points.length < 1) return changePct;
     const first = points[0].p;
@@ -285,13 +295,13 @@ export function PairChart({ className }: { className?: string }) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="font-display text-[0.65rem] font-semibold uppercase tracking-[0.2em] text-ink-400">
-            ETH / USDC
+            {pairLive.baseSymbol} / USDC
           </p>
           <p className="font-amount mt-1 text-2xl text-ink-900 sm:text-3xl">
             {midLoading && !displayPrice
               ? "—"
               : displayPrice.toLocaleString(undefined, {
-                  maximumFractionDigits: 2,
+                  maximumFractionDigits: priceDigits(displayPrice),
                 })}
             <span className="font-display ml-2 text-sm font-bold text-ink-400">
               {hover
@@ -384,7 +394,7 @@ export function PairChart({ className }: { className?: string }) {
         <div
           ref={hostRef}
           className="h-full w-full touch-pan-y"
-          aria-label="ETH price chart"
+          aria-label={`${pairLive.baseSymbol} price chart`}
         />
       </div>
 
@@ -393,7 +403,7 @@ export function PairChart({ className }: { className?: string }) {
           Uniswap V2 {style === "candle" ? "OHLC from pool syncs" : "pool mid"}
           {source ? ` · ${source}` : ""} · scroll zoom · drag pan
           {minP > 0 && maxP > 0
-            ? ` · $${minP.toFixed(0)}–$${maxP.toFixed(0)}`
+            ? ` · $${minP.toFixed(priceDigits(minP) > 2 ? 3 : 0)}–$${maxP.toFixed(priceDigits(maxP) > 2 ? 3 : 0)}`
             : ""}
         </p>
         <button

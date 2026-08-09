@@ -67,6 +67,3 @@ export const UNISWAP_PAIR_ABI = [
     outputs: [{ name: "", type: "address" }],
   },
 ] as const;
-
-/** Depth ladder sizes in ETH (sell side) / USDC notional (buy side). */
-export const DEPTH_ETH_SIZES = [0.01, 0.05, 0.1, 0.25, 0.5, 1] as const;

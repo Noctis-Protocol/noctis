@@ -8,6 +8,13 @@
 import { usePoolDepth, type DepthLevel } from "@/hooks/usePoolDepth";
 import { cn } from "@/lib/utils";
 
+function formatSize(size: number): string {
+  if (size >= 100) return size.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  if (size >= 1) return size.toFixed(2);
+  if (size >= 0.01) return size.toFixed(3);
+  return size.toPrecision(2);
+}
+
 function LevelRow({
   side,
   level,
@@ -30,7 +37,7 @@ function LevelRow({
         aria-hidden
       />
       <span className={cn("relative", isAsk ? "text-ink-500" : "text-ink-800")}>
-        {level.sizeEth.toFixed(level.sizeEth < 0.1 ? 3 : 2)}
+        {formatSize(level.sizeBase)}
       </span>
       <span
         className={cn(
@@ -38,7 +45,9 @@ function LevelRow({
           isAsk ? "text-red-600" : "text-brand-700"
         )}
       >
-        {level.price.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+        {level.price.toLocaleString(undefined, {
+          maximumFractionDigits: level.price < 10 ? 4 : 0,
+        })}
       </span>
       <span
         className={cn(
@@ -58,8 +67,9 @@ export function PoolDepth({ className }: { className?: string }) {
     spreadBps,
     bestAsk,
     bestBid,
-    reserveEth,
+    reserveBase,
     reserveUsdc,
+    baseSymbol,
     asks,
     bids,
     isLoading,
@@ -101,11 +111,11 @@ export function PoolDepth({ className }: { className?: string }) {
           {/* Asks — buy ETH, far (expensive) at top → best ask at bottom */}
           <div className="mt-1 space-y-px">
             <p className="px-1.5 pb-0.5 font-sans text-[0.6rem] uppercase tracking-wide text-red-600/70">
-              Ask · buy ETH
+              Ask · buy {baseSymbol}
             </p>
             {asks.map((l) => (
               <LevelRow
-                key={`a-${l.sizeEth}-${l.price}`}
+                key={`a-${l.sizeBase}-${l.price}`}
                 side="ask"
                 level={l}
                 maxImpact={maxImpact}
@@ -161,11 +171,11 @@ export function PoolDepth({ className }: { className?: string }) {
           {/* Bids — sell ETH, best bid at top → far (cheap) at bottom */}
           <div className="space-y-px">
             <p className="px-1.5 pb-0.5 font-sans text-[0.6rem] uppercase tracking-wide text-brand-700/70">
-              Bid · sell ETH
+              Bid · sell {baseSymbol}
             </p>
             {bids.map((l) => (
               <LevelRow
-                key={`b-${l.sizeEth}-${l.price}`}
+                key={`b-${l.sizeBase}-${l.price}`}
                 side="bid"
                 level={l}
                 maxImpact={maxImpact}
@@ -176,7 +186,7 @@ export function PoolDepth({ className }: { className?: string }) {
           <p className="mt-3 font-sans text-[0.65rem] leading-relaxed text-ink-400">
             Liquidity:{" "}
             <span className="font-amount text-ink-600">
-              {reserveEth != null ? reserveEth.toFixed(2) : "—"} ETH
+              {reserveBase != null ? formatSize(reserveBase) : "—"} {baseSymbol}
             </span>
             {" · "}
             <span className="font-amount text-ink-600">

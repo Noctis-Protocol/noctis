@@ -76,9 +76,9 @@ export function useEthPrice() {
     };
   }, [publicClient, live.tick, chainId]);
 
-  // Prefer reserve mid for the badge (true spot); fall back to 1 ETH quote
-  const ethPrice =
-    live.midPrice ?? tradePrice ?? FALLBACK_PRICE;
+  // Own 1 ETH quote — the live context may follow a non-ETH pair in V2,
+  // so its mid is no longer necessarily an ETH price.
+  const ethPrice = tradePrice ?? FALLBACK_PRICE;
 
   const getOutputAmount = useCallback(
     async (

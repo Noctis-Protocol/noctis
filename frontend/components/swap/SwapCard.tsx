@@ -185,14 +185,25 @@ function MevProtectionCheck({
   );
 }
 
-export function SwapCard() {
+interface SwapCardProps {
+  /** Controlled pair selection (desk page shares it with chart + depth) */
+  baseAddress?: string | null;
+  onBaseAddressChange?: (address: string) => void;
+}
+
+export function SwapCard({
+  baseAddress: baseAddressProp,
+  onBaseAddressChange,
+}: SwapCardProps = {}) {
   const { isConnected, address } = useAccount();
   const publicClient = usePublicClient();
   const contracts = useContractAddresses();
   const { tradableTokens, usdc } = useTokenRegistry();
 
-  // Pair selection: base token vs USDC
-  const [baseAddress, setBaseAddress] = useState<string | null>(null);
+  // Pair selection: base token vs USDC (controlled by the page when provided)
+  const [internalBase, setInternalBase] = useState<string | null>(null);
+  const baseAddress =
+    baseAddressProp !== undefined ? baseAddressProp : internalBase;
   const baseToken: TokenInfo | null =
     tradableTokens.find(
       (t) => t.address.toLowerCase() === baseAddress?.toLowerCase()
@@ -465,14 +476,18 @@ export function SwapCard() {
     setSwapStep("idle");
   }, [basePrice, inputAmount, isSell, realOutput]);
 
-  const handleSelectBase = useCallback((token: TokenInfo) => {
-    setBaseAddress(token.address);
-    setInputAmount("");
-    setRealOutput(null);
-    setBuyBlockReason(null);
-    setBuyWarning(null);
-    setSwapStep("idle");
-  }, []);
+  const handleSelectBase = useCallback(
+    (token: TokenInfo) => {
+      setInternalBase(token.address);
+      onBaseAddressChange?.(token.address);
+      setInputAmount("");
+      setRealOutput(null);
+      setBuyBlockReason(null);
+      setBuyWarning(null);
+      setSwapStep("idle");
+    },
+    [onBaseAddressChange]
+  );
 
   // Execute full swap: create order → request → decrypt → execute
   const handleSwap = useCallback(async () => {
