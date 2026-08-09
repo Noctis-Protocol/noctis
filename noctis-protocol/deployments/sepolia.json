@@ -1,27 +1,32 @@
 {
   "network": "sepolia",
   "chainId": 11155111,
-  "updatedAt": "2026-08-08",
+  "updatedAt": "2026-08-09",
   "contracts": {
-    "NoctisVault": "0x6607cE016237C3D8969B318018604c09D16fdd03",
-    "NoctisExchange": "0xcF13F272cdc5684c3863b589C2a9fb14A0aa0362",
+    "NoctisVault": "0xe65b394c8A4347D92bc665C60c6263Eb115d21A7",
+    "NoctisExchange": "0xCa06f9981407D0469DA5f9ffE78A6684DECD7d56",
+    "USDC": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
     "USDT": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
     "UniswapV2Router": "0xC532a74256D3Db42D0Bf7a0400fEFDbad7694008",
     "EthUsdPriceFeed": "0x694AA1769357215DE4FAC081bf1f309aDC325306",
     "SequencerUptimeFeed": "0x0000000000000000000000000000000000000000",
     "feeRecipient": "0x24448B8c366b754E7B0a3F0D46cBCa62BD7beAb7",
+    "gasRecipient": "0xB63063402eD60d4630bc575dEC5458CDB94d16D6",
     "feeBps": 5,
     "TimelockController": "0x6fa358E424341F60338620f26AB297553E551A7D"
   },
   "subgraph": {
-    "version": "v0.9.0",
-    "queryUrl": "https://api.studio.thegraph.com/query/1724540/noctis-protocol/v0.9.0",
-    "vaultStartBlock": 11445821,
-    "exchangeStartBlock": 11447982,
+    "version": "v2.0.1",
+    "queryUrl": "https://api.studio.thegraph.com/query/1724540/noctis-protocol/v2.0.1",
+    "startBlock": 11450500,
     "studioUrl": "https://thegraph.com/studio/subgraph/noctis-protocol",
     "name": "noctis-protocol"
   },
   "previous": {
+    "NoctisVault": "0x6607cE016237C3D8969B318018604c09D16fdd03",
+    "NoctisExchange": "0xcF13F272cdc5684c3863b589C2a9fb14A0aa0362",
+    "note": "V1 stack (single ETH/USDC pair) replaced by V2 multi-token (NoctisVaultV2/NoctisExchangeV2, see sepolia.v2.json). V1 subgraph was v0.9.0.",
+    "older2": {
     "NoctisVault": "0x6607cE016237C3D8969B318018604c09D16fdd03",
     "NoctisExchange": "0x26f430671554e69EaA9e15112dAb02239B124dCA",
     "note": "Exchange redeployed (C-1/M-2/S-1 audit fixes; EIP-170 size trim to 23.1kb); vault unchanged",
@@ -44,6 +49,7 @@
           }
         }
       }
+    }
     }
   },
   "ops": {
