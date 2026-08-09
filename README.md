@@ -7,9 +7,16 @@
 ## Features
 
 - Deposit ETH / USDC / listed tokens → **encrypted** vault balances  
+- **Confidential USDC deposits (V2.5)** — wrap to ERC-7984 cUSDC, deposit an
+  encrypted amount; only the pooled window sum is ever revealed  
 - Gasless market orders → relayer + FHE proofs → Uniswap fill  
-- Withdraw via pull pattern  
+- Stealth exits with **withdrawal shredding** (≤ 8 tranches to fresh addresses)  
 - Desk UI: live pool mid/depth, private “Reveal trades”, activity feed  
+
+📖 **Whitepaper:** [English](noctis-protocol/docs/WHITEPAPER.md) ·
+[Français](noctis-protocol/docs/WHITEPAPER_FR.md) — the full protocol and
+every privacy technique, from beginner to academic depth. Research paper:
+[FHE batch netting (dark pools)](noctis-protocol/docs/research/FHE_BATCH_NETTING.md).
 
 ## Privacy model (honest boundary)
 
@@ -42,7 +49,16 @@ What stays private, from whom:
 - **Trusted relayer for liveness only.** The relayer can censor or delay, but
   cannot read amounts, decrypt balances, alter EIP-712-signed parameters, or
   move funds outside the signed paths.
+- **Deposit amounts can be confidential (V2.5).** The ERC-7984 cUSDC path
+  encrypts deposit sizes end-to-end; the vault enforces caps homomorphically
+  (FHE-gated auto-refund) and the keeper flush reveals only the pooled sum of
+  a window — never an individual deposit.
+- **Settlement storage diffs are chaffed (V2.5).** Every real balance write is
+  accompanied by K decoy `FHE.add(balance, 0)` rewrites, so a storage-diff
+  observer cannot tell whose balance moved.
 - **Fill size is public at settlement** — inherent to settling on Uniswap.
+  Structural fix designed (V3 homomorphic batch netting: only window residuals
+  reach Uniswap — see `noctis-protocol/docs/ROADMAP_V3_NETTING.md`).
 
 ## Monorepo
 

@@ -1,6 +1,6 @@
 # Roadmap — End-to-End Encrypted Intents
 
-**Status:** Phases A, B, Year 2 (stealth exits) **and stealth exits v2 (unlinkable payouts)** SHIPPED (2026-08-09).
+**Status:** Phases A, B, Year 2 (stealth exits), stealth exits v2 (unlinkable payouts) **and V2.5 (confidential deposits + chaff + shredding)** SHIPPED (2026-08-09).
 
 - **Phase A** — `createEncryptedOrderViaRelayer` (browser-side FHE input
   encryption, bounds enforced at settlement) and pseudo-random vaultIds.
@@ -58,6 +58,33 @@
   - Residual: archive-node storage replay (`withdrawalRequests[id].requester`)
     still reveals the link — same accepted storage-read boundary as
     `vaultOwners`; and cancellation intentionally re-links (no payout ever).
+- **V2.5 — confidential deposits, chaff, shredding** — live on Sepolia
+  (2026-08-09):
+  - **ERC-7984 confidential USDC deposits:** `NoctisConfidentialToken` (cUSDC,
+    OpenZeppelin confidential-contracts wrapper) + a vault
+    `onConfidentialTransferReceived` hook. Deposit amounts are encrypted
+    end-to-end (browser euint64 → vault euint128 credit); the per-token
+    maxDeposit cap is enforced HOMOMORPHICALLY with an FHE-gated automatic
+    refund (over-limit deposits credit 0 and bounce, invisibly). The keeper
+    flushes the vault's pooled cUSDC buffer per window — only the SUM of a
+    window's deposits is ever decrypted (k-anonymity), never individual
+    amounts. This closes the deposit-amount correlation leak for USDC.
+  - **Chaff decoy writes:** every settlement balance write (credit, deduct
+    lock, withdrawal debit) also rewrites K decoy balances with
+    `FHE.add(balance, 0)` — fresh, indistinguishable handles. A settlement
+    tx's storage diff now touches K+1 balances, breaking the "which balance
+    moved" side channel that made `vaultOwners` scrubbing moot.
+    Owner-tunable `setChaffWrites` (default 2, hard cap 8).
+  - **Withdrawal shredding:** `MAX_PENDING_WITHDRAWALS_PER_USER` raised 1→8;
+    the withdraw UI splits one logical withdrawal into up to 8 equal tranches
+    to distinct stealth recipients — payout-amount correlation becomes a
+    subset-sum problem.
+  - **Keeper private-tx option:** `PRIVATE_TX_RPC_URL` routes keeper-sent txs
+    through a private relay (Flashbots Protect on mainnet); reads stay on the
+    standard RPC.
+  - Docs: bilingual whitepaper (`noctis-protocol/docs/WHITEPAPER{,_FR}.md`),
+    V3 netting design (`docs/ROADMAP_V3_NETTING.md`), research paper
+    (`docs/research/FHE_BATCH_NETTING.md`).
 - **Explicitly out of scope (V3+, with rationale):**
   - **Removing `orderTraders`/`vaultOwners` plaintext storage entirely:**
     cryptographically blocked on fhEVM — the settlement credit path must index

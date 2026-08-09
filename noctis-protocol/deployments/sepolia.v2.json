@@ -3,15 +3,16 @@
   "chainId": 11155111,
   "updatedAt": "2026-08-09",
   "contracts": {
-    "NoctisVaultV2": "0x08142032CbA4af8FbABE923619dF92F23BDB8122",
-    "NoctisExchangeV2": "0x58Df90A2bf5d3e0A5D66e4CCe2778eb6b15920F7",
+    "NoctisVaultV2": "0xe8a8f4B3900C0B7565e1177B5CA2E6CDd816a8c7",
+    "NoctisExchangeV2": "0x04FCF0DD74A6e958A75774e4f042CB32EFB81e4d",
     "USDC": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
     "UniswapV2Router": "0xC532a74256D3Db42D0Bf7a0400fEFDbad7694008",
     "EthUsdPriceFeed": "0x694AA1769357215DE4FAC081bf1f309aDC325306",
     "SequencerUptimeFeed": "0x0000000000000000000000000000000000000000",
     "feeRecipient": "0x24448B8c366b754E7B0a3F0D46cBCa62BD7beAb7",
     "gasRecipient": "0xB63063402eD60d4630bc575dEC5458CDB94d16D6",
-    "feeBps": 5
+    "feeBps": 5,
+    "ConfidentialUSDC": "0x060442176024B77E04c122eC49BcE5330f993Bd5"
   },
   "notes": "V2 SSOT (multi-token). Live V1 SSOT stays canonical until cutover. gasRecipient = relayer float wallet: gas refunds are paid there at settlement (no Safe round-trip).",
   "tokens": {
@@ -26,8 +27,8 @@
       "poolSeedTx": "0x295c283c71588e1cfddb454773519e5400c425afcae6d8c53ba7364edfe36cec",
       "vaultConfigured": true,
       "exchangeConfigured": true,
-      "minOrderBase": "1540",
-      "maxOrderBase": "92445"
+      "minOrderBase": "1534",
+      "maxOrderBase": "92089"
     },
     "nLINK": {
       "address": "0xA09EC0B0A6b0387DFbF0e14a18572BDb54cd8913",
@@ -40,8 +41,8 @@
       "poolSeedTx": "0x90a85c0845018d4e64f8e501c47a2c6dc740c75ef48cd1e5900e0e4749353d5e",
       "vaultConfigured": true,
       "exchangeConfigured": true,
-      "minOrderBase": "120592846104838890",
-      "maxOrderBase": "7235570766290333456"
+      "minOrderBase": "120556306158540659",
+      "maxOrderBase": "7233378369512439543"
     },
     "nDAI": {
       "address": "0xFeaD8B309127f48Ec8028927d8a3c4Fcda50031D",
@@ -54,8 +55,8 @@
       "poolSeedTx": "0xb865fa032bfff1cc5146bc33be0c53017e0c29dcd57e92222e3bbce65f5f24c3",
       "vaultConfigured": true,
       "exchangeConfigured": true,
-      "minOrderBase": "1000414862039139010",
-      "maxOrderBase": "60024891722348340633"
+      "minOrderBase": "1000317480762044257",
+      "maxOrderBase": "60019048845722655456"
     },
     "nEUR": {
       "address": "0x16D59db09a000882a9EA2EEd5c4D1CF70563E432",
@@ -75,13 +76,13 @@
   "ops": {
     "relayer": "0xB63063402eD60d4630bc575dEC5458CDB94d16D6",
     "timelock": "0x6fa358E424341F60338620f26AB297553E551A7D",
-    "timelockConfiguredAt": "2026-08-09T12:27:01.015Z",
+    "timelockConfiguredAt": "2026-08-09T14:31:49.566Z",
     "withdrawalBatchWindowSeconds": 300
   },
   "subgraph": {
-    "version": "v2.5.0",
-    "queryUrl": "https://api.studio.thegraph.com/query/1724540/noctis-protocol/v2.5.0",
-    "startBlock": 11452180,
+    "version": "v2.6.0",
+    "queryUrl": "https://api.studio.thegraph.com/query/1724540/noctis-protocol/v2.6.0",
+    "startBlock": 11452800,
     "studioUrl": "https://thegraph.com/studio/subgraph/noctis-protocol",
     "name": "noctis-protocol"
   }

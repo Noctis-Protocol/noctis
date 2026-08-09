@@ -19,6 +19,9 @@ export const env = {
     "",
   subgraphUrl: process.env.NEXT_PUBLIC_SUBGRAPH_URL || "",
   relayerUrl: process.env.NEXT_PUBLIC_RELAYER_URL || "http://localhost:3001",
+  // ERC-7984 confidential USDC wrapper (V2.5) — empty disables the option
+  confidentialWrapperAddress:
+    process.env.NEXT_PUBLIC_CONFIDENTIAL_WRAPPER_ADDRESS || "",
   // Mainnet (Phase D — leave empty until deployments/mainnet.json)
   vaultAddressMainnet: process.env.NEXT_PUBLIC_VAULT_ADDRESS_MAINNET || "",
   exchangeAddressMainnet: process.env.NEXT_PUBLIC_EXCHANGE_ADDRESS_MAINNET || "",
@@ -36,6 +39,8 @@ export type ContractAddresses = {
   usdcAddress: string;
   subgraphUrl: string;
   relayerUrl: string;
+  /** ERC-7984 cUSDC wrapper — empty string when confidential deposits are off */
+  confidentialWrapperAddress: string;
   configured: boolean;
 };
 
@@ -69,6 +74,7 @@ export function getContractAddressesForChain(chainId: number | undefined): Contr
       usdcAddress,
       subgraphUrl: env.subgraphUrlMainnet,
       relayerUrl: env.relayerUrlMainnet || env.relayerUrl,
+      confidentialWrapperAddress: "", // Phase D: mainnet wrapper not deployed
       configured: Boolean(vaultAddress && exchangeAddress && usdcAddress),
     };
   }
@@ -80,6 +86,7 @@ export function getContractAddressesForChain(chainId: number | undefined): Contr
     usdcAddress: env.usdcAddress,
     subgraphUrl: env.subgraphUrl,
     relayerUrl: env.relayerUrl,
+    confidentialWrapperAddress: env.confidentialWrapperAddress,
     configured: Boolean(env.vaultAddress && env.exchangeAddress && env.usdcAddress),
   };
 }

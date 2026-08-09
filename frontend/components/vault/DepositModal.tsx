@@ -10,7 +10,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { X, ArrowRight, AlertCircle, CheckCircle } from "lucide-react";
+import { X, ArrowRight, AlertCircle, CheckCircle, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { TokenSelector } from "@/components/ui/TokenSelector";
@@ -36,6 +36,8 @@ export function DepositModal({ open, onOpenChange }: DepositModalProps) {
   const [selected, setSelected] = useState<TokenInfo | null>(null);
   const [amount, setAmount] = useState("");
   const [validationError, setValidationError] = useState<string | null>(null);
+  // PRIVACY (V2.5): confidential USDC deposit via the ERC-7984 wrapper
+  const [confidential, setConfidential] = useState(false);
 
   // Default to the first supported token (native ETH sorts first)
   const token = selected ?? supportedTokens[0] ?? null;
@@ -48,7 +50,14 @@ export function DepositModal({ open, onOpenChange }: DepositModalProps) {
   const { addTransaction } = useBalanceTracker();
 
   // Pass callbacks to refresh balances and track deposits
-  const { depositETH, depositToken, isLoading, error: transactionError } = useNoctisVault({
+  const {
+    depositETH,
+    depositToken,
+    depositConfidentialUSDC,
+    confidentialDepositAvailable,
+    isLoading,
+    error: transactionError,
+  } = useNoctisVault({
     onDepositSuccess: refetchBalances,
     onDepositTracked: (depositAmount, depositTokenSymbol, txHash) => {
       addTransaction({
@@ -81,6 +90,10 @@ export function DepositModal({ open, onOpenChange }: DepositModalProps) {
     }
   }, [amount, token, limits.minDeposit, limits.maxDeposit]);
 
+  // Confidential path: USDC only (ERC-7984 wrapper underlying), when deployed
+  const canDepositConfidentially =
+    confidentialDepositAvailable && !!token && !token.isNative && token.symbol === "USDC";
+
   const handleDeposit = async () => {
     if (!token || !amount || parseFloat(amount) <= 0 || validationError) return;
 
@@ -89,6 +102,9 @@ export function DepositModal({ open, onOpenChange }: DepositModalProps) {
     try {
       if (token.isNative) {
         success = await depositETH(amount);
+      } else if (confidential && canDepositConfidentially) {
+        const amountBigInt = parseTokenAmount(amount, token.decimals);
+        success = await depositConfidentialUSDC(token, amountBigInt);
       } else {
         const amountBigInt = parseTokenAmount(amount, token.decimals);
         success = await depositToken(token, amountBigInt);
@@ -150,6 +166,7 @@ export function DepositModal({ open, onOpenChange }: DepositModalProps) {
               onSelect={(t) => {
                 setSelected(t);
                 setAmount("");
+                setConfidential(false);
               }}
               disabled={registryLoading}
               ariaLabel="Select deposit token"
@@ -224,11 +241,44 @@ export function DepositModal({ open, onOpenChange }: DepositModalProps) {
             )}
           </div>
 
+          {/* Confidential deposit toggle (USDC via ERC-7984 wrapper) */}
+          {canDepositConfidentially && (
+            <button
+              type="button"
+              onClick={() => setConfidential((v) => !v)}
+              className={cn(
+                "w-full mb-4 p-3 rounded-xl border text-left transition-colors",
+                confidential
+                  ? "border-violet-400 bg-violet-50"
+                  : "border-border bg-muted/50 hover:bg-muted"
+              )}
+            >
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <EyeOff className={cn("h-4 w-4", confidential ? "text-violet-600" : "text-muted-foreground")} />
+                Confidential deposit
+                <span
+                  className={cn(
+                    "ml-auto text-[10px] px-2 py-0.5 rounded-full",
+                    confidential ? "bg-violet-600 text-white" : "bg-muted-foreground/20 text-muted-foreground"
+                  )}
+                >
+                  {confidential ? "ON" : "OFF"}
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                Wraps USDC into confidential cUSDC first, then deposits an
+                encrypted amount — the deposit size never appears on-chain.
+                Only the wrap amount is public, decoupled from your vault credit.
+              </p>
+            </button>
+          )}
+
           {/* Info */}
           <div className="p-3 rounded-xl bg-muted mb-4 text-sm text-muted-foreground">
             <p>
               Your deposit will be encrypted using FHE. Only you can view your balance.
-              {token && !token.isNative && " ERC-20 deposits need an approval transaction first."}
+              {token && !token.isNative && !confidential && " ERC-20 deposits need an approval transaction first."}
+              {confidential && canDepositConfidentially && " Confidential path: approve, wrap, then encrypted transfer (3 transactions)."}
             </p>
           </div>
 
@@ -249,7 +299,11 @@ export function DepositModal({ open, onOpenChange }: DepositModalProps) {
             loading={isLoading}
             onClick={handleDeposit}
           >
-            {isLoading ? "Depositing..." : `Deposit ${token?.symbol ?? ""}`}
+            {isLoading
+              ? "Depositing..."
+              : confidential && canDepositConfidentially
+                ? `Deposit ${token?.symbol ?? ""} confidentially`
+                : `Deposit ${token?.symbol ?? ""}`}
             {!isLoading && <ArrowRight className="ml-2 h-4 w-4" />}
           </Button>
         </Dialog.Content>

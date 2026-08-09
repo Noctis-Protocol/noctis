@@ -317,9 +317,12 @@ describe("NoctisVaultV2 - Multi-Token Vault (Mock Mode)", function () {
       ).to.be.revertedWithCustomError(vault, "ExceedsMaximumWithdrawal");
     });
 
-    it("caps pending withdrawals per user", async function () {
-      await depositToken(wbtc, WBTC(2));
-      await vault.connect(user).requestWithdrawal(await wbtc.getAddress(), WBTC(1));
+    it("caps pending withdrawals per user (8 — shredding capacity)", async function () {
+      await depositToken(wbtc, WBTC(9));
+      const cap = await vault.MAX_PENDING_WITHDRAWALS_PER_USER();
+      for (let i = 0n; i < cap; i++) {
+        await vault.connect(user).requestWithdrawal(await wbtc.getAddress(), WBTC(1));
+      }
       await expect(
         vault.connect(user).requestWithdrawal(await wbtc.getAddress(), WBTC(1))
       ).to.be.revertedWithCustomError(vault, "TooManyPendingWithdrawals");

@@ -10,6 +10,15 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import "../base/GatewayCaller.sol";
 
+/// @dev Minimal surface of the ERC-7984 ERC20 wrapper used by the vault
+///      (interfaces cost no bytecode; avoids importing the full OZ package)
+interface IConfidentialWrapper {
+    function confidentialBalanceOf(address account) external view returns (euint64);
+    function unwrap(address from, address to, euint64 amount) external returns (bytes32);
+    function underlying() external view returns (address);
+    function rate() external view returns (uint256);
+}
+
 /**
  * @title NoctisVaultV2 - Multi-Token Encrypted Asset Vault
  * @notice Token-generic vault with encrypted balances using ZAMA fhEVM v0.9
@@ -117,7 +126,34 @@ contract NoctisVaultV2 is ReentrancyGuard, Pausable, Ownable, GatewayCaller {
 
     /// @dev H-1: bound the pending queue per user
     mapping(address => uint256) private pendingWithdrawalCount;
-    uint256 public constant MAX_PENDING_WITHDRAWALS_PER_USER = 1;
+    /// @dev PRIVACY (shredding): raised from 1 so a user can split one logical
+    ///      withdrawal into several denomination-sized requests with distinct
+    ///      stealth recipients — subset-sum linking becomes combinatorial.
+    uint256 public constant MAX_PENDING_WITHDRAWALS_PER_USER = 8;
+
+    /// @dev PRIVACY (chaff): number of decoy balance rewrites per real
+    ///      settlement write. FHE.add(balance, 0) yields a fresh handle
+    ///      indistinguishable from a real credit, so a storage-diff observer
+    ///      sees K+1 touched balances and cannot tell which one moved.
+    ///      0 disables. Bounded to cap settlement gas.
+    uint8 public chaffWrites = 2;
+    uint8 public constant MAX_CHAFF_WRITES = 8;
+
+    /// @dev Decoy candidate pool: users with an initialized balance per token
+    mapping(address => address[]) private tokenDepositors;
+    mapping(address => mapping(address => bool)) private inDepositorRegistry;
+    uint256 private chaffNonce;
+
+    // ============================================
+    // CONFIDENTIAL DEPOSITS (ERC-7984)
+    // ============================================
+
+    /// @notice ERC-7984 confidential wrapper accepted for encrypted deposits (cUSDC)
+    address public confidentialWrapper;
+    /// @notice The wrapper's public underlying (must be a registered token)
+    address public confidentialUnderlying;
+    /// @notice Underlying units per confidential unit (wrapper rate; 1 for USDC)
+    uint256 public confidentialWrapperRate;
 
     uint256 public constant CANCELLATION_TIMEOUT = 1 hours;
     uint256 public constant DECRYPTION_TIMEOUT = 1 hours;
@@ -238,6 +274,9 @@ contract NoctisVaultV2 is ReentrancyGuard, Pausable, Ownable, GatewayCaller {
     error OnlyGuardian();
     error WithdrawalBatchPending(uint256 timeLeft);
     error BatchWindowTooLong();
+    error InvalidChaffCount();
+    error NotConfidentialWrapper();
+    error WrapperNotConfigured();
 
     // ============================================
     // EVENTS (privacy: no indexed user addresses on flow events)
@@ -274,6 +313,11 @@ contract NoctisVaultV2 is ReentrancyGuard, Pausable, Ownable, GatewayCaller {
     event ExchangeAuthorized(address indexed exchange, bool status);
 
     event WithdrawalBatchWindowUpdated(uint64 window);
+    event ChaffWritesUpdated(uint8 k);
+    /// @dev Anonymous by design: token + timestamp only (like WithdrawalRequested)
+    event ConfidentialDeposited(address indexed token, uint256 timestamp);
+    event ConfidentialWrapperConfigured(address wrapper, address underlying, uint256 rate);
+    event ConfidentialBufferFlushRequested(bytes32 unwrapRequestId);
 
     event GuardianProposed(address indexed newGuardian, uint256 executeAfter);
     event GuardianChanged(address indexed oldGuardian, address indexed newGuardian);
@@ -420,6 +464,79 @@ contract NoctisVaultV2 is ReentrancyGuard, Pausable, Ownable, GatewayCaller {
         emit Deposited(token, msg.sender);
     }
 
+    /**
+     * @notice ERC-7984 receiver hook — confidential deposit path (cUSDC)
+     * @dev PRIVACY (confidential deposits): called by the configured wrapper
+     *      during confidentialTransferAndCall. The amount is an encrypted
+     *      handle end to end — no observer (nor this contract) ever sees the
+     *      deposit size in clear. The per-token maxDeposit cap is enforced
+     *      HOMOMORPHICALLY: the returned ebool gates the credit, and a false
+     *      return makes the token refund the transfer automatically.
+     *      minDeposit/anti-spam block gating are not enforceable on encrypted
+     *      amounts and do not apply on this path (documented trade-off).
+     */
+    function onConfidentialTransferReceived(
+        address, /* operator */
+        address from,
+        euint64 amount,
+        bytes calldata /* data */
+    ) external nonReentrant whenNotPaused returns (ebool) {
+        if (msg.sender != confidentialWrapper) revert NotConfidentialWrapper();
+        address token = confidentialUnderlying;
+        if (!tokenConfigs[token].enabled) revert TokenNotSupported();
+
+        // Scale confidential units -> underlying units (rate = 1 for USDC)
+        uint256 rate = confidentialWrapperRate;
+        euint128 amt = rate == 1
+            ? FHE.asEuint128(amount)
+            : FHE.mul(FHE.asEuint128(amount), uint128(rate));
+
+        // Homomorphic deposit cap: over-limit -> credit 0 + token-side refund
+        ebool ok = FHE.le(amt, tokenConfigs[token].maxDeposit);
+        euint128 credited = FHE.select(ok, amt, FHE.asEuint128(0));
+
+        _assignVaultIdIfNeeded(from);
+        euint128 newBalance;
+        if (depositedFlag[token][from]) {
+            newBalance = FHE.add(balances[token][from], credited);
+        } else {
+            newBalance = credited;
+            depositedFlag[token][from] = true;
+            _registerDepositor(token, from);
+        }
+        balances[token][from] = newBalance;
+        FHE.allowThis(newBalance);
+        FHE.allow(newBalance, from);
+
+        emit ConfidentialDeposited(token, block.timestamp);
+
+        // The token contract must be able to read the success flag (refund path)
+        FHE.allowTransient(ok, msg.sender);
+        return ok;
+    }
+
+    /**
+     * @notice Unwrap the vault's whole confidential buffer to public underlying
+     * @dev Permissionless — the keeper calls it each window after confidential
+     *      deposits land. Only the POOLED total (sum across users since the
+     *      last flush) becomes public at finalizeUnwrap, never individual
+     *      amounts: that pooling is exactly the k-anonymity this path buys.
+     *      Settlement pays out of the vault's public reserve, which this
+     *      flush replenishes (documented reserve-timing assumption).
+     */
+    function flushConfidentialBuffer()
+        external
+        nonReentrant
+        whenNotPaused
+        returns (bytes32 requestId)
+    {
+        address wrapper = confidentialWrapper;
+        if (wrapper == address(0)) revert WrapperNotConfigured();
+        euint64 buffer = IConfidentialWrapper(wrapper).confidentialBalanceOf(address(this));
+        requestId = IConfidentialWrapper(wrapper).unwrap(address(this), address(this), buffer);
+        emit ConfidentialBufferFlushRequested(requestId);
+    }
+
     /// @dev Silent vaultId assignment on first deposit (no event: privacy).
     ///      PRIVACY: ids are pseudo-random, not sequential — sequential ids let an
     ///      observer rebuild the vaultId<->address table by replaying the public
@@ -467,6 +584,7 @@ contract NoctisVaultV2 is ReentrancyGuard, Pausable, Ownable, GatewayCaller {
         } else {
             newBalance = encryptedAmount;
             depositedFlag[token][user] = true;
+            _registerDepositor(token, user);
         }
         balances[token][user] = newBalance;
 
@@ -474,6 +592,44 @@ contract NoctisVaultV2 is ReentrancyGuard, Pausable, Ownable, GatewayCaller {
         FHE.allow(newBalance, user);
 
         lifetimeDeposits[user][token] += amount;
+    }
+
+    function _registerDepositor(address token, address user) private {
+        if (!inDepositorRegistry[token][user]) {
+            inDepositorRegistry[token][user] = true;
+            tokenDepositors[token].push(user);
+        }
+    }
+
+    /// @dev PRIVACY (chaff): rewrite up to `chaffWrites` decoy balances with an
+    ///      encrypted zero-add after a real settlement write. The new handles
+    ///      are cryptographically indistinguishable from real credits — the
+    ///      storage diff of the settlement tx stops identifying whose balance
+    ///      actually moved. Decoys are drawn from the depositor registry;
+    ///      draws are bounded (2K probes) so gas stays capped.
+    function _chaffWrites(address token, address realUser) private {
+        uint256 k = chaffWrites;
+        if (k == 0) return;
+        address[] storage pool = tokenDepositors[token];
+        uint256 n = pool.length;
+        if (n < 2) return;
+
+        euint128 zero = FHE.asEuint128(0);
+        uint256 nonce = chaffNonce;
+        uint256 written;
+        for (uint256 i; i < k * 2 && written < k; ++i) {
+            address decoy =
+                pool[uint256(keccak256(abi.encodePacked(block.prevrandao, ++nonce))) % n];
+            if (decoy == realUser) continue;
+            euint128 newBal = FHE.add(balances[token][decoy], zero);
+            balances[token][decoy] = newBal;
+            FHE.allowThis(newBal);
+            FHE.allow(newBal, decoy);
+            unchecked {
+                ++written;
+            }
+        }
+        chaffNonce = nonce;
     }
 
     // ============================================
@@ -568,6 +724,9 @@ contract NoctisVaultV2 is ReentrancyGuard, Pausable, Ownable, GatewayCaller {
         balances[token][msg.sender] = newBalance;
         FHE.allowThis(newBalance);
         FHE.allow(newBalance, msg.sender);
+
+        // PRIVACY (chaff): ambiguous storage diff on the withdrawal debit too
+        _chaffWrites(token, msg.sender);
 
         FHE.allowThis(encAmount);
         FHE.allowThis(hasSufficientBalance);
@@ -979,11 +1138,15 @@ contract NoctisVaultV2 is ReentrancyGuard, Pausable, Ownable, GatewayCaller {
         } else {
             newBalance = encryptedAmount;
             depositedFlag[token][user] = true;
+            _registerDepositor(token, user);
         }
         balances[token][user] = newBalance;
 
         FHE.allowThis(newBalance);
         FHE.allow(newBalance, user);
+
+        // PRIVACY (chaff): make the settlement storage diff ambiguous
+        _chaffWrites(token, user);
 
         emit BalanceCredited(token);
     }
@@ -1011,6 +1174,9 @@ contract NoctisVaultV2 is ReentrancyGuard, Pausable, Ownable, GatewayCaller {
         balances[token][user] = newBalance;
         FHE.allowThis(newBalance);
         FHE.allow(newBalance, user);
+
+        // PRIVACY (chaff): make the settlement storage diff ambiguous
+        _chaffWrites(token, user);
 
         FHE.allowThis(hasSufficient);
         FHE.makePubliclyDecryptable(hasSufficient);
@@ -1053,6 +1219,9 @@ contract NoctisVaultV2 is ReentrancyGuard, Pausable, Ownable, GatewayCaller {
         balances[token][user] = newBalance;
         FHE.allowThis(newBalance);
         FHE.allow(newBalance, user);
+
+        // PRIVACY (chaff): make the settlement storage diff ambiguous
+        _chaffWrites(token, user);
 
         FHE.allowThis(hasSufficient);
         FHE.makePubliclyDecryptable(hasSufficient);
@@ -1258,6 +1427,26 @@ contract NoctisVaultV2 is ReentrancyGuard, Pausable, Ownable, GatewayCaller {
         if (window > MAX_WITHDRAWAL_BATCH_WINDOW) revert BatchWindowTooLong();
         withdrawalBatchWindow = window;
         emit WithdrawalBatchWindowUpdated(window);
+    }
+
+    /// @notice PRIVACY (chaff): tune decoy balance rewrites per settlement
+    ///         write (0 disables; capped to bound settlement gas)
+    function setChaffWrites(uint8 k) external onlyOwner {
+        if (k > MAX_CHAFF_WRITES) revert InvalidChaffCount();
+        chaffWrites = k;
+        emit ChaffWritesUpdated(k);
+    }
+
+    /// @notice Wire the ERC-7984 confidential wrapper (cUSDC). Its underlying
+    ///         must already be a registered token.
+    function setConfidentialWrapper(address wrapper) external onlyOwner {
+        if (wrapper == address(0)) revert InvalidAddress();
+        address underlying = IConfidentialWrapper(wrapper).underlying();
+        if (!tokenConfigs[underlying].enabled) revert TokenNotSupported();
+        confidentialWrapper = wrapper;
+        confidentialUnderlying = underlying;
+        confidentialWrapperRate = IConfidentialWrapper(wrapper).rate();
+        emit ConfidentialWrapperConfigured(wrapper, underlying, confidentialWrapperRate);
     }
 
     /// @notice Propose a new guardian (7-day timelock; guardian can only pause)

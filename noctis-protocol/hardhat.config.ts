@@ -7,6 +7,27 @@ import * as dotenv from "dotenv";
 
 dotenv.config();
 
+// ERC-7984 sources need solc 0.8.27 (@openzeppelin/confidential-contracts).
+// They are compiled through per-file overrides — NOT by bumping the default
+// compiler — so the main 0.8.24 compilation job (and therefore
+// NoctisExchangeV2's viaIR output, which sits close to the EIP-170 limit)
+// keeps the exact composition it was tuned with.
+const SOLC_0_8_27_SOURCES = [
+  "contracts/v2/NoctisConfidentialToken.sol",
+  "@openzeppelin/confidential-contracts/token/ERC7984/ERC7984.sol",
+  "@openzeppelin/confidential-contracts/token/ERC7984/utils/ERC7984Utils.sol",
+  "@openzeppelin/confidential-contracts/token/ERC7984/extensions/ERC7984ERC20Wrapper.sol",
+];
+
+const solc0827 = {
+  version: "0.8.27",
+  settings: {
+    optimizer: { enabled: true, runs: 1 },
+    evmVersion: "cancun",
+    viaIR: true,
+  },
+};
+
 // FHEVM mock plugin — optional. Root monorepo may hoist @zama-fhe/relayer-sdk@0.4.x
 // while the plugin expects 0.3.0-5. Use SKIP_FHEVM=1 for non-FHE unit tests / ops scripts.
 if (process.env.SKIP_FHEVM !== "1") {
@@ -16,15 +37,20 @@ if (process.env.SKIP_FHEVM !== "1") {
 
 const config: HardhatUserConfig = {
   solidity: {
-    version: "0.8.24",
-    settings: {
-      optimizer: {
-        enabled: true,
-        runs: 1, // Minimum bytecode size for deployment (maximize size optimization)
+    compilers: [
+      {
+        version: "0.8.24",
+        settings: {
+          optimizer: {
+            enabled: true,
+            runs: 1, // Minimum bytecode size for deployment (maximize size optimization)
+          },
+          evmVersion: "cancun",
+          viaIR: true, // Enable IR-based code generation for better optimization
+        },
       },
-      evmVersion: "cancun",
-      viaIR: true, // Enable IR-based code generation for better optimization
-    },
+    ],
+    overrides: Object.fromEntries(SOLC_0_8_27_SOURCES.map((s) => [s, solc0827])),
   },
 
   networks: {

@@ -580,3 +580,47 @@ export const ERC20ABI = [
     outputs: [{ name: "", type: "uint8" }],
   },
 ] as const;
+
+/**
+ * ERC-7984 confidential wrapper (cUSDC) — V2.5 confidential deposits.
+ * wrap() is the ONLY public amount of the flow; the vault deposit itself
+ * travels as an encrypted handle via confidentialTransferAndCall.
+ */
+export const ConfidentialWrapperABI = [
+  {
+    name: "wrap",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "to", type: "address" },
+      { name: "amount", type: "uint256" },
+    ],
+    outputs: [{ name: "", type: "bytes32" }],
+  },
+  {
+    name: "confidentialTransferAndCall",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "to", type: "address" },
+      { name: "encryptedAmount", type: "bytes32" },
+      { name: "inputProof", type: "bytes" },
+      { name: "data", type: "bytes" },
+    ],
+    outputs: [{ name: "", type: "bytes32" }],
+  },
+  {
+    name: "confidentialBalanceOf",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "account", type: "address" }],
+    outputs: [{ name: "", type: "bytes32" }],
+  },
+  {
+    name: "underlying",
+    type: "function",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }],
+  },
+] as const;

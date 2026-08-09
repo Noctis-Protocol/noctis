@@ -19,11 +19,11 @@ import {
   usePublicClient,
 } from "wagmi";
 import { parseEther, decodeEventLog } from "viem";
-import { NoctisVaultABI, ERC20ABI } from "@/lib/contracts/abi";
+import { NoctisVaultABI, ERC20ABI, ConfidentialWrapperABI } from "@/lib/contracts/abi";
 import { useContractAddresses } from "@/lib/wagmi";
 import { useTransactionState } from "./useTransactionState";
 import { useFhevm } from "./useFhevm";
-import { encryptWithdrawalIntent } from "@/lib/fheEncryptClient";
+import { encryptWithdrawalIntent, encryptAmount64 } from "@/lib/fheEncryptClient";
 import {
   parseTokenAmount,
   formatTokenAmount,
@@ -44,6 +44,15 @@ interface UseNoctisVaultReturn {
   depositETH: (amount: string) => Promise<boolean>;
   /** Deposit a registered ERC-20 (approve + depositToken) — raw units */
   depositToken: (token: TokenInfo, amount: bigint) => Promise<boolean>;
+  /**
+   * PRIVACY (V2.5): confidential USDC deposit via the ERC-7984 wrapper.
+   * approve + wrap (public — the only visible amount), then
+   * confidentialTransferAndCall with a browser-encrypted euint64: the vault
+   * credit amount never appears in calldata, logs, or storage in clear.
+   */
+  depositConfidentialUSDC: (token: TokenInfo, amount: bigint) => Promise<boolean>;
+  /** True when the confidential wrapper is configured on this chain */
+  confidentialDepositAvailable: boolean;
   /** Request a withdrawal — optional stealth recipient (Year 2) — returns requestId */
   requestWithdrawal: (token: TokenInfo, amount: string, recipient?: string) => Promise<bigint | null>;
   /** Execute withdrawal via self-relay public decrypt — returns true on success */
@@ -206,6 +215,95 @@ export function useNoctisVault(options?: UseNoctisVaultOptions): UseNoctisVaultR
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [contracts, publicClient, writeContractAsync, finalizeDeposit, setPending, setConfirming, setFailed]
+  );
+
+  // PRIVACY (V2.5): confidential USDC deposit — 3 steps
+  // 1. approve(wrapper, amount)   [public]
+  // 2. wrap(user, amount)         [public — the ONLY visible amount, severed
+  //                                from the vault credit that follows]
+  // 3. confidentialTransferAndCall(vault, encAmount, proof)
+  //                               [encrypted end to end]
+  const depositConfidentialUSDC = useCallback(
+    async (token: TokenInfo, amount: bigint): Promise<boolean> => {
+      const wrapper = contracts?.confidentialWrapperAddress;
+      if (!wrapper || !contracts?.vaultAddress) {
+        setFailed("Confidential deposits not configured on this chain");
+        return false;
+      }
+      if (!publicClient || !address) {
+        setFailed("Wallet not connected");
+        return false;
+      }
+
+      try {
+        // Step 1: approve the wrapper on the underlying USDC
+        setPending(1, 3);
+        const approveHash = await writeContractAsync({
+          abi: ERC20ABI,
+          address: token.address,
+          functionName: "approve",
+          args: [wrapper as `0x${string}`, amount],
+        });
+        setConfirming(approveHash);
+        const approveReceipt = await publicClient.waitForTransactionReceipt({
+          hash: approveHash,
+          confirmations: 1,
+        });
+        if (approveReceipt.status !== "success") {
+          setFailed("Approval transaction reverted");
+          return false;
+        }
+
+        // Step 2: wrap USDC -> cUSDC (public amount; breaks here on purpose)
+        setPending(2, 3);
+        const wrapHash = await writeContractAsync({
+          abi: ConfidentialWrapperABI,
+          address: wrapper as `0x${string}`,
+          functionName: "wrap",
+          args: [address, amount],
+        });
+        setConfirming(wrapHash);
+        const wrapReceipt = await publicClient.waitForTransactionReceipt({
+          hash: wrapHash,
+          confirmations: 1,
+        });
+        if (wrapReceipt.status !== "success") {
+          setFailed("Wrap transaction reverted");
+          return false;
+        }
+
+        // Step 3: encrypted transfer into the vault (amount never in clear)
+        setPending(3, 3);
+        const { encryptedAmount, inputProof } = await encryptAmount64(
+          wrapper,
+          address,
+          amount
+        );
+        const depositHash = await writeContractAsync({
+          abi: ConfidentialWrapperABI,
+          address: wrapper as `0x${string}`,
+          functionName: "confidentialTransferAndCall",
+          args: [
+            contracts.vaultAddress as `0x${string}`,
+            encryptedAmount,
+            inputProof,
+            "0x",
+          ],
+        });
+        return await finalizeDeposit(
+          depositHash,
+          token.symbol,
+          Number(formatTokenAmount(amount, token.decimals, Math.min(token.decimals, 8))),
+          `Confidential ${token.symbol} deposit submitted — amount encrypted end to end`
+        );
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Confidential deposit failed";
+        setFailed(message.slice(0, 100));
+        return false;
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [contracts, publicClient, address, writeContractAsync, finalizeDeposit, setPending, setConfirming, setFailed]
   );
 
   // Request withdrawal - returns requestId or null
@@ -648,6 +746,8 @@ export function useNoctisVault(options?: UseNoctisVaultOptions): UseNoctisVaultR
   return {
     depositETH,
     depositToken,
+    depositConfidentialUSDC,
+    confidentialDepositAvailable: Boolean(contracts?.confidentialWrapperAddress),
     requestWithdrawal,
     executeWithdrawal,
     cancelWithdrawal,

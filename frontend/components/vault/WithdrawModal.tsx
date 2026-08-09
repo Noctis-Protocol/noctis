@@ -17,8 +17,16 @@ import { Input } from "@/components/ui/input";
 import { TokenSelector } from "@/components/ui/TokenSelector";
 import { cn, isValidAmountInput } from "@/lib/utils";
 import { useNoctisVault } from "@/hooks/useNoctisVault";
-import { useTokenRegistry, useTokenLimits } from "@/hooks/useTokenRegistry";
+import {
+  useTokenRegistry,
+  useTokenLimits,
+  parseTokenAmount,
+  formatTokenAmount,
+} from "@/hooks/useTokenRegistry";
 import type { TokenInfo } from "@/hooks/useTokenRegistry";
+
+/** PRIVACY (V2.5, shredding): max parallel requests the vault accepts */
+const MAX_SHRED_TRANCHES = 8;
 
 interface WithdrawModalProps {
   open: boolean;
@@ -43,6 +51,15 @@ export function WithdrawModal({ open, onOpenChange }: WithdrawModalProps) {
     }
   });
 
+  // PRIVACY (V2.5, shredding): one recipient per line — the withdrawal is
+  // split into equal tranches, one request per stealth address. Payouts land
+  // as k separate keeper transactions: linking them back to one logical
+  // withdrawal becomes a subset-sum problem for the observer.
+  const stealthRecipients = stealthRecipient
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
   const handleWithdraw = async () => {
     if (!token || !amount || parseFloat(amount) <= 0) return;
 
@@ -50,13 +67,30 @@ export function WithdrawModal({ open, onOpenChange }: WithdrawModalProps) {
     setShowSuccess(false);
     setRequestId(null);
 
-    // Year 2 stealth exit: optional private destination, encrypted client-side
-    const recipient = stealthMode && stealthRecipient ? stealthRecipient : undefined;
-    const newRequestId = await requestWithdrawal(token, amount, recipient);
+    let lastId: bigint | null = null;
 
-    if (newRequestId !== null) {
+    if (stealthMode && stealthRecipients.length > 1) {
+      // Shredding: split the raw amount into equal tranches (remainder on the
+      // first) and issue one encrypted request per recipient
+      const total = parseTokenAmount(amount, token.decimals);
+      const n = BigInt(stealthRecipients.length);
+      const base = total / n;
+      for (let i = 0; i < stealthRecipients.length; i++) {
+        const tranche = i === 0 ? base + (total % n) : base;
+        const trancheStr = formatTokenAmount(tranche, token.decimals, token.decimals);
+        const id = await requestWithdrawal(token, trancheStr, stealthRecipients[i]);
+        if (id === null) return; // error surfaced by the hook; stop the batch
+        lastId = id;
+      }
+    } else {
+      // Year 2 stealth exit: optional private destination, encrypted client-side
+      const recipient = stealthMode && stealthRecipients[0] ? stealthRecipients[0] : undefined;
+      lastId = await requestWithdrawal(token, amount, recipient);
+    }
+
+    if (lastId !== null) {
       // Success!
-      setRequestId(newRequestId);
+      setRequestId(lastId);
       setShowSuccess(true);
 
       // Reset form after showing success message
@@ -72,8 +106,9 @@ export function WithdrawModal({ open, onOpenChange }: WithdrawModalProps) {
 
   const invalidStealthRecipient =
     stealthMode &&
-    Boolean(stealthRecipient) &&
-    !/^0x[a-fA-F0-9]{40}$/.test(stealthRecipient);
+    stealthRecipients.length > 0 &&
+    (stealthRecipients.some((r) => !/^0x[a-fA-F0-9]{40}$/.test(r)) ||
+      stealthRecipients.length > MAX_SHRED_TRANCHES);
 
   const handleAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (isValidAmountInput(e.target.value)) {
@@ -162,20 +197,31 @@ export function WithdrawModal({ open, onOpenChange }: WithdrawModalProps) {
             </button>
             {stealthMode && (
               <>
-                <Input
-                  type="text"
-                  placeholder="0x… fresh address (revealed only at payout)"
+                <textarea
+                  placeholder={"0x… fresh address (revealed only at payout)\n0x… add more lines to SHRED the withdrawal"}
                   value={stealthRecipient}
-                  onChange={(e) => setStealthRecipient(e.target.value.trim())}
-                  className={cn("text-sm font-mono", invalidStealthRecipient && "border-red-500")}
+                  onChange={(e) => setStealthRecipient(e.target.value)}
+                  rows={Math.min(Math.max(stealthRecipients.length + 1, 2), 5)}
+                  className={cn(
+                    "w-full rounded-md border border-input bg-background px-3 py-2",
+                    "text-sm font-mono placeholder:text-muted-foreground",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    invalidStealthRecipient && "border-red-500"
+                  )}
                 />
                 {invalidStealthRecipient && (
-                  <p className="text-xs text-red-500">Invalid address</p>
+                  <p className="text-xs text-red-500">
+                    {stealthRecipients.length > MAX_SHRED_TRANCHES
+                      ? `Max ${MAX_SHRED_TRANCHES} recipients (pending-request cap)`
+                      : "Invalid address in the list"}
+                  </p>
                 )}
                 <p className="text-xs text-muted-foreground">
-                  The destination is encrypted in your browser and stays hidden
-                  on-chain until the payout executes. ETH is pushed directly —
-                  the fresh address needs no gas to receive it.
+                  Destinations are encrypted in your browser and stay hidden
+                  on-chain until each payout executes.{" "}
+                  {stealthRecipients.length > 1
+                    ? `Shredding: the amount is split into ${stealthRecipients.length} equal tranches, one per address — an observer faces a subset-sum puzzle instead of one matching payout.`
+                    : "Add more lines to shred the withdrawal across several fresh addresses."}
                 </p>
               </>
             )}
@@ -229,12 +275,16 @@ export function WithdrawModal({ open, onOpenChange }: WithdrawModalProps) {
             className="w-full"
             disabled={
               !token || !amount || parseFloat(amount) <= 0 || exceedsCap ||
-              invalidStealthRecipient || (stealthMode && !stealthRecipient) || isLoading
+              invalidStealthRecipient || (stealthMode && stealthRecipients.length === 0) || isLoading
             }
             loading={isLoading}
             onClick={handleWithdraw}
           >
-            {isLoading ? "Processing..." : `Withdraw ${token?.symbol ?? ""}`}
+            {isLoading
+              ? "Processing..."
+              : stealthMode && stealthRecipients.length > 1
+                ? `Shred into ${stealthRecipients.length} withdrawals`
+                : `Withdraw ${token?.symbol ?? ""}`}
             {!isLoading && <ArrowRight className="ml-2 h-4 w-4" />}
           </Button>
         </Dialog.Content>

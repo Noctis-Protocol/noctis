@@ -82,6 +82,11 @@ const CONFIG = {
     .filter(Boolean),
   rateLimitPerMin: parseInt(process.env.RELAYER_RATE_LIMIT_PER_MIN || '60', 10),
   bodyLimit: process.env.RELAYER_BODY_LIMIT || '100kb',
+  // PRIVACY (MEV/mempool): optional dedicated endpoint for SENDING txs only
+  // (reads stay on rpcUrl). On mainnet point this at Flashbots Protect
+  // (https://rpc.flashbots.net) so settlement/payout txs skip the public
+  // mempool — no sandwiching, no pre-confirmation timing analysis.
+  privateTxRpcUrl: process.env.PRIVATE_TX_RPC_URL || '',
 };
 
 try {
@@ -329,6 +334,17 @@ const VAULT_ABI = [
   'function requestWithdrawalExecution(uint256 requestId)',
   'function executeWithdrawalCallback(uint256 requestId, bytes cleartexts, bytes decryptionProof)',
   'event DecryptionReady(uint256 indexed requestId, bytes32[] handles)',
+
+  // PRIVACY (confidential deposits, V2.5): pooled unwrap of the vault's
+  // cUSDC buffer — only the SUM of a window's deposits ever becomes public.
+  'function confidentialWrapper() view returns (address)',
+  'function flushConfidentialBuffer() returns (bytes32)',
+  'event ConfidentialDeposited(address indexed token, uint256 timestamp)',
+  'event ConfidentialBufferFlushRequested(bytes32 unwrapRequestId)',
+];
+
+const WRAPPER_ABI = [
+  'function finalizeUnwrap(bytes32 unwrapRequestId, uint64 unwrapAmountCleartext, bytes decryptionProof)',
 ];
 
 const EXCHANGE_ABI = [
@@ -386,6 +402,9 @@ class KeeperRelayerService {
   private fheInstance: any = null;
   private withdrawalsInFlight = new Set<string>();
   private withdrawalBackoff = new Map<string, { fails: number; nextTryMs: number }>();
+  // Confidential deposits (V2.5): flush the cUSDC buffer when deposits landed
+  private confidentialFlushPending = false;
+  private confidentialFlushInFlight = false;
 
   constructor() {
     if (!CONFIG.privateKey) {
@@ -399,7 +418,12 @@ class KeeperRelayerService {
     }
 
     this.provider = new ethers.JsonRpcProvider(CONFIG.rpcUrl);
-    this.wallet = new Wallet(CONFIG.privateKey, this.provider);
+    // PRIVACY (MEV/mempool): txs can go through a dedicated private relay
+    // (Flashbots Protect on mainnet) while reads stay on the standard RPC.
+    const txProvider = CONFIG.privateTxRpcUrl
+      ? new ethers.JsonRpcProvider(CONFIG.privateTxRpcUrl)
+      : this.provider;
+    this.wallet = new Wallet(CONFIG.privateKey, txProvider);
     this.vault = new Contract(CONFIG.vaultAddress, VAULT_ABI, this.wallet);
     this.vaultReader = new Contract(CONFIG.vaultAddress, VAULT_ABI, this.provider);
     this.exchange = new Contract(CONFIG.exchangeAddress, EXCHANGE_ABI, this.wallet);
@@ -923,6 +947,9 @@ class KeeperRelayerService {
     const network = await this.provider.getNetwork();
     console.log(`📡 Network:       ${network.name} (Chain ID: ${network.chainId})`);
     console.log(`📡 RPC:           ${CONFIG.rpcUrl.includes('flashbots') ? '🛡️ Flashbots' : '⚠️ Standard'}`);
+    if (CONFIG.privateTxRpcUrl) {
+      console.log(`🛡️ Private txs:   ${CONFIG.privateTxRpcUrl}`);
+    }
     console.log(`📋 Vault:         ${CONFIG.vaultAddress}`);
     console.log(`📈 Exchange:      ${CONFIG.exchangeAddress}`);
     console.log(`🔑 Relayer:       ${this.wallet.address}`);
@@ -995,12 +1022,17 @@ class KeeperRelayerService {
           const fromBlock = this.lastProcessedBlock + 1;
           const toBlock = currentBlock;
           await this.processExchangeEvents(fromBlock, toBlock);
+          await this.watchConfidentialDeposits(fromBlock, toBlock);
           this.lastProcessedBlock = currentBlock;
         }
 
         // PRIVACY (stealth exits v2): execute due withdrawals so the
         // requester's wallet never signs the payout path (no tx.from link)
         await this.processDueWithdrawals();
+
+        // PRIVACY (confidential deposits): pooled buffer flush — replenishes
+        // the vault's public reserve with only the SUM of the window
+        await this.processConfidentialFlush();
 
         await this.sleep(CONFIG.pollIntervalMs);
       } catch (error: any) {
@@ -1105,6 +1137,83 @@ class KeeperRelayerService {
       } finally {
         this.withdrawalsInFlight.delete(key);
       }
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // CONFIDENTIAL BUFFER FLUSH (V2.5)
+  // ═══════════════════════════════════════════════════════════════════════
+
+  /** Mark the buffer dirty when confidential deposits land in the window. */
+  private async watchConfidentialDeposits(fromBlock: number, toBlock: number): Promise<void> {
+    try {
+      const events = await this.vaultReader.queryFilter(
+        'ConfidentialDeposited',
+        fromBlock,
+        toBlock
+      );
+      if (events.length > 0) {
+        this.confidentialFlushPending = true;
+        // Count only — never per-deposit details (they are encrypted anyway)
+        console.log(`[${this.ts()}] 🔒 ${events.length} confidential deposit(s) — flush scheduled`);
+      }
+    } catch {
+      // Pre-V2.5 vault (no such event) or transient RPC failure
+    }
+  }
+
+  /**
+   * Unwrap the vault's whole cUSDC buffer to public USDC. Only the pooled
+   * total of the window becomes public at finalizeUnwrap — never individual
+   * deposit amounts (k-anonymity of the batch).
+   */
+  private async processConfidentialFlush(): Promise<void> {
+    if (!this.confidentialFlushPending || this.confidentialFlushInFlight) return;
+    this.confidentialFlushInFlight = true;
+    try {
+      const wrapperAddress: string = await this.vaultReader.confidentialWrapper();
+      if (!wrapperAddress || wrapperAddress === ethers.ZeroAddress) {
+        this.confidentialFlushPending = false;
+        return;
+      }
+
+      const tx = await this.vault.flushConfidentialBuffer();
+      const receipt = await tx.wait();
+      this.recordGas(receipt);
+
+      let unwrapRequestId: string | null = null;
+      for (const log of receipt?.logs ?? []) {
+        try {
+          const parsed = this.vault.interface.parseLog(log);
+          if (parsed?.name === 'ConfidentialBufferFlushRequested') {
+            unwrapRequestId = parsed.args.unwrapRequestId;
+          }
+        } catch {}
+      }
+      if (!unwrapRequestId) throw new Error('flush event missing');
+
+      const instance = await this.getFheInstance();
+      const dec = await instance.publicDecrypt([unwrapRequestId]);
+      const [pooled] = ethers.AbiCoder.defaultAbiCoder().decode(
+        ['uint64'],
+        dec.abiEncodedClearValues
+      );
+
+      const wrapper = new Contract(wrapperAddress, WRAPPER_ABI, this.wallet);
+      const finTx = await wrapper.finalizeUnwrap(unwrapRequestId, pooled, dec.decryptionProof);
+      this.recordGas(await finTx.wait());
+
+      this.confidentialFlushPending = false;
+      // The pooled sum is public on-chain at this point; logging it adds nothing new
+      console.log(`[${this.ts()}] 🔒 Confidential buffer flushed, tx=${finTx.hash}`);
+    } catch (error: any) {
+      console.error(
+        `[FLUSH] failed:`,
+        (error.reason || error.message || '').slice(0, 80)
+      );
+      // Keep confidentialFlushPending — retried next poll
+    } finally {
+      this.confidentialFlushInFlight = false;
     }
   }
 

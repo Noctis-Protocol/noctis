@@ -21,6 +21,7 @@ interface BrowserFheInstance {
     contractAddress: string,
     userAddress: string
   ) => {
+    add64: (value: bigint) => void;
     add128: (value: bigint) => void;
     addAddress: (value: string) => void;
     encrypt: () => Promise<{ handles: Uint8Array[]; inputProof: Uint8Array }>;
@@ -104,6 +105,23 @@ export async function encryptWithdrawalIntent(
     encryptedRecipient: toHex(handles[1]),
     inputProof: toHex(inputProof),
   };
+}
+
+/**
+ * PRIVACY (V2.5, confidential deposits): encrypt a euint64 transfer amount
+ * for the ERC-7984 wrapper (cUSDC). The proof binds to (wrapper, user):
+ * confidentialTransferAndCall is sent by the user's own wallet.
+ */
+export async function encryptAmount64(
+  wrapperAddress: string,
+  userAddress: string,
+  amount: bigint
+): Promise<{ encryptedAmount: `0x${string}`; inputProof: `0x${string}` }> {
+  const instance = await getBrowserInstance();
+  const input = instance.createEncryptedInput(wrapperAddress, userAddress);
+  input.add64(amount);
+  const { handles, inputProof } = await input.encrypt();
+  return { encryptedAmount: toHex(handles[0]), inputProof: toHex(inputProof) };
 }
 
 /**

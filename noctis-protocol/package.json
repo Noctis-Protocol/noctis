@@ -78,5 +78,8 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/Noctis-Protocol/noctis-protocol"
+  },
+  "dependencies": {
+    "@openzeppelin/confidential-contracts": "^0.5.2"
   }
 }
