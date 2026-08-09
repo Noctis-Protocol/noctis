@@ -1,16 +1,17 @@
 specVersion: 0.0.5
+description: Noctis Protocol V2 - multi-token FHE dark pool (privacy-first indexing)
 schema:
   file: ./schema.graphql
 dataSources:
-  # NoctisVault - Deposits & Withdrawals
-  # Updated 2026-02-05: Privacy-First Architecture Deployment
+  # NoctisVaultV2 - Token-generic vault (native ETH = address(0))
+  # Deployed on Sepolia ~block 11450620; startBlock set slightly earlier.
   - kind: ethereum/contract
-    name: NoctisVault
+    name: NoctisVaultV2
     network: sepolia
     source:
-      address: "0x6607cE016237C3D8969B318018604c09D16fdd03"
-      abi: NoctisVault
-      startBlock: 11445821
+      address: "0xe65b394c8A4347D92bc665C60c6263Eb115d21A7"
+      abi: NoctisVaultV2
+      startBlock: 11450500
     mapping:
       kind: ethereum/events
       apiVersion: 0.0.7
@@ -19,52 +20,71 @@ dataSources:
         - Deposit
         - Withdrawal
         - User
+        - Token
         - GlobalStats
       abis:
-        - name: NoctisVault
-          file: ./abis/NoctisVault.json
+        - name: NoctisVaultV2
+          file: ./abis/NoctisVaultV2.json
       eventHandlers:
-        - event: ETHDeposited(indexed address)
-          handler: handleETHDeposit
-        - event: USDTDeposited(indexed address)
-          handler: handleUSDTDeposit
-        - event: WithdrawalRequested(indexed uint256,address,bool,uint256)
+        # Token-aware deposit (amount intentionally omitted by the event;
+        # ETH amount recovered from msg.value which is public anyway)
+        - event: Deposited(indexed address,address)
+          handler: handleDeposited
+        - event: WithdrawalRequested(indexed uint256,address,address,uint256)
           handler: handleWithdrawalRequested
         - event: WithdrawalExecuted(indexed uint256,address,uint256)
           handler: handleWithdrawalExecuted
         - event: WithdrawalCancelled(indexed uint256,address)
           handler: handleWithdrawalCancelled
+        - event: WithdrawalExecutionFailed(indexed uint256)
+          handler: handleWithdrawalExecutionFailed
+        # Token registry (used to track per-token decimals & enabled state)
+        - event: TokenConfigured(indexed address,bool)
+          handler: handleTokenConfigured
       file: ./src/noctis-vault.ts
-  
-  # NoctisExchange - Orders (PRIVACY-FIRST ARCHITECTURE)
-  # Updated 2026-02-05: Privacy audit fixes - no addresses in events
+
+  # NoctisExchangeV2 - Multi-token orders (PRIVACY-FIRST: no addresses, no amounts)
   - kind: ethereum/contract
-    name: NoctisExchange
+    name: NoctisExchangeV2
     network: sepolia
     source:
-      address: "0xcF13F272cdc5684c3863b589C2a9fb14A0aa0362"
-      abi: NoctisExchange
-      startBlock: 11447982
+      address: "0xCa06f9981407D0469DA5f9ffE78A6684DECD7d56"
+      abi: NoctisExchangeV2
+      startBlock: 11450500
     mapping:
       kind: ethereum/events
       apiVersion: 0.0.7
       language: wasm/assemblyscript
       entities:
         - Order
+        - Token
         - GlobalStats
       abis:
-        - name: NoctisExchange
-          file: ./abis/NoctisExchange.json
+        - name: NoctisExchangeV2
+          file: ./abis/NoctisExchangeV2.json
       eventHandlers:
-        # Privacy-first events (CRIT-3 fix: no addresses, no amounts)
-        - event: OrderCreated(indexed uint256,bool,uint256,uint8)
+        # V2: orderType removed, baseToken added
+        - event: OrderCreated(indexed uint256,indexed address,bool,uint256)
           handler: handleOrderCreated
         - event: OrderFilledSimple(indexed uint256,uint256)
           handler: handleOrderFilledSimple
-        # Updated: SwapDecryptionReady no longer has indexed address (CRIT-3)
-        - event: SwapDecryptionReady(indexed uint256,bytes32[])
-          handler: handleSwapDecryptionReady
-        # Updated: OrderCancelled no longer has address parameter (CRIT-3)
+        # Private fill companion event (ciphertext handles only; used as an
+        # idempotent FILLED marker, handles are never stored)
+        - event: OrderFilledPrivate(indexed uint256,bytes32,bytes32)
+          handler: handleOrderFilledPrivate
         - event: OrderCancelled(indexed uint256,uint256)
           handler: handleOrderCancelled
+        # Swap execution request markers (sell path + buy path)
+        - event: SwapDecryptionReady(indexed uint256,bytes32[])
+          handler: handleSwapDecryptionReady
+        - event: BuySufficiencyReady(indexed uint256,bytes32,uint256)
+          handler: handleBuySufficiencyReady
+        # Fee & gas refund flows (cleartext at settlement)
+        - event: ProtocolFeeCollected(indexed uint256,indexed address,uint256,indexed address)
+          handler: handleProtocolFeeCollected
+        - event: GasRefundCollected(indexed uint256,indexed address,uint256)
+          handler: handleGasRefundCollected
+        # Tradable token registry
+        - event: TradableTokenConfigured(indexed address,bool)
+          handler: handleTradableTokenConfigured
       file: ./src/noctis-exchange.ts

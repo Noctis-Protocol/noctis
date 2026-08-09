@@ -31,7 +31,7 @@ export class BuySufficiencyReady__Params {
     return this._event.parameters[1].value.toBytes();
   }
 
-  get usdtNeeded(): BigInt {
+  get usdcNeeded(): BigInt {
     return this._event.parameters[2].value.toBigInt();
   }
 }
@@ -68,6 +68,28 @@ export class FeeRecipientUpdated__Params {
   _event: FeeRecipientUpdated;
 
   constructor(event: FeeRecipientUpdated) {
+    this._event = event;
+  }
+
+  get oldRecipient(): Address {
+    return this._event.parameters[0].value.toAddress();
+  }
+
+  get newRecipient(): Address {
+    return this._event.parameters[1].value.toAddress();
+  }
+}
+
+export class GasRecipientUpdated extends ethereum.Event {
+  get params(): GasRecipientUpdated__Params {
+    return new GasRecipientUpdated__Params(this);
+  }
+}
+
+export class GasRecipientUpdated__Params {
+  _event: GasRecipientUpdated;
+
+  constructor(event: GasRecipientUpdated) {
     this._event = event;
   }
 
@@ -189,16 +211,16 @@ export class OrderCreated__Params {
     return this._event.parameters[0].value.toBigInt();
   }
 
+  get baseToken(): Address {
+    return this._event.parameters[1].value.toAddress();
+  }
+
   get isBuy(): boolean {
-    return this._event.parameters[1].value.toBoolean();
+    return this._event.parameters[2].value.toBoolean();
   }
 
   get timestamp(): BigInt {
-    return this._event.parameters[2].value.toBigInt();
-  }
-
-  get orderType(): i32 {
-    return this._event.parameters[3].value.toI32();
+    return this._event.parameters[3].value.toBigInt();
   }
 }
 
@@ -246,28 +268,6 @@ export class OrderFilledSimple__Params {
   }
 
   get timestamp(): BigInt {
-    return this._event.parameters[1].value.toBigInt();
-  }
-}
-
-export class OrderSizeLimitsUpdated extends ethereum.Event {
-  get params(): OrderSizeLimitsUpdated__Params {
-    return new OrderSizeLimitsUpdated__Params(this);
-  }
-}
-
-export class OrderSizeLimitsUpdated__Params {
-  _event: OrderSizeLimitsUpdated;
-
-  constructor(event: OrderSizeLimitsUpdated) {
-    this._event = event;
-  }
-
-  get minSize(): BigInt {
-    return this._event.parameters[0].value.toBigInt();
-  }
-
-  get maxSize(): BigInt {
     return this._event.parameters[1].value.toBigInt();
   }
 }
@@ -478,25 +478,51 @@ export class TimelockSet__Params {
   }
 }
 
-export class TreasuryFunded extends ethereum.Event {
-  get params(): TreasuryFunded__Params {
-    return new TreasuryFunded__Params(this);
+export class TokensRescued extends ethereum.Event {
+  get params(): TokensRescued__Params {
+    return new TokensRescued__Params(this);
   }
 }
 
-export class TreasuryFunded__Params {
-  _event: TreasuryFunded;
+export class TokensRescued__Params {
+  _event: TokensRescued;
 
-  constructor(event: TreasuryFunded) {
+  constructor(event: TokensRescued) {
     this._event = event;
   }
 
-  get funder(): Address {
+  get token(): Address {
     return this._event.parameters[0].value.toAddress();
   }
 
+  get to(): Address {
+    return this._event.parameters[1].value.toAddress();
+  }
+
   get amount(): BigInt {
-    return this._event.parameters[1].value.toBigInt();
+    return this._event.parameters[2].value.toBigInt();
+  }
+}
+
+export class TradableTokenConfigured extends ethereum.Event {
+  get params(): TradableTokenConfigured__Params {
+    return new TradableTokenConfigured__Params(this);
+  }
+}
+
+export class TradableTokenConfigured__Params {
+  _event: TradableTokenConfigured;
+
+  constructor(event: TradableTokenConfigured) {
+    this._event = event;
+  }
+
+  get baseToken(): Address {
+    return this._event.parameters[0].value.toAddress();
+  }
+
+  get enabled(): boolean {
+    return this._event.parameters[1].value.toBoolean();
   }
 }
 
@@ -518,20 +544,20 @@ export class Unpaused__Params {
   }
 }
 
-export class NoctisExchange__getMyOrderResultValue0Struct extends ethereum.Tuple {
+export class NoctisExchangeV2__getMyOrderResultValue0Struct extends ethereum.Tuple {
   get orderId(): BigInt {
     return this[0].toBigInt();
   }
 
-  get encryptedTrader(): Bytes {
-    return this[1].toBytes();
+  get baseToken(): Address {
+    return this[1].toAddress();
   }
 
-  get encryptedAmountETH(): Bytes {
+  get encryptedTrader(): Bytes {
     return this[2].toBytes();
   }
 
-  get encryptedAmountUSDT(): Bytes {
+  get encryptedAmountBase(): Bytes {
     return this[3].toBytes();
   }
 
@@ -547,36 +573,32 @@ export class NoctisExchange__getMyOrderResultValue0Struct extends ethereum.Tuple
     return this[6].toI32();
   }
 
-  get orderType(): i32 {
+  get slippageToleranceBPS(): i32 {
     return this[7].toI32();
   }
 
-  get slippageToleranceBPS(): i32 {
-    return this[8].toI32();
-  }
-
   get referencePriceUSD(): BigInt {
-    return this[9].toBigInt();
+    return this[8].toBigInt();
   }
 
   get maxPriceDeviationBPS(): i32 {
-    return this[10].toI32();
+    return this[9].toI32();
   }
 }
 
-export class NoctisExchange__getOrderPublicResult {
+export class NoctisExchangeV2__getOrderPublicResult {
   value0: boolean;
-  value1: boolean;
-  value2: i32;
-  value3: BigInt;
-  value4: i32;
+  value1: Address;
+  value2: boolean;
+  value3: i32;
+  value4: BigInt;
 
   constructor(
     value0: boolean,
-    value1: boolean,
-    value2: i32,
-    value3: BigInt,
-    value4: i32,
+    value1: Address,
+    value2: boolean,
+    value3: i32,
+    value4: BigInt,
   ) {
     this.value0 = value0;
     this.value1 = value1;
@@ -588,16 +610,13 @@ export class NoctisExchange__getOrderPublicResult {
   toMap(): TypedMap<string, ethereum.Value> {
     let map = new TypedMap<string, ethereum.Value>();
     map.set("value0", ethereum.Value.fromBoolean(this.value0));
-    map.set("value1", ethereum.Value.fromBoolean(this.value1));
+    map.set("value1", ethereum.Value.fromAddress(this.value1));
+    map.set("value2", ethereum.Value.fromBoolean(this.value2));
     map.set(
-      "value2",
-      ethereum.Value.fromUnsignedBigInt(BigInt.fromI32(this.value2)),
+      "value3",
+      ethereum.Value.fromUnsignedBigInt(BigInt.fromI32(this.value3)),
     );
-    map.set("value3", ethereum.Value.fromUnsignedBigInt(this.value3));
-    map.set(
-      "value4",
-      ethereum.Value.fromUnsignedBigInt(BigInt.fromI32(this.value4)),
-    );
+    map.set("value4", ethereum.Value.fromUnsignedBigInt(this.value4));
     return map;
   }
 
@@ -605,26 +624,105 @@ export class NoctisExchange__getOrderPublicResult {
     return this.value0;
   }
 
-  getIsBuy(): boolean {
+  getBaseToken(): Address {
     return this.value1;
   }
 
-  getStatus(): i32 {
+  getIsBuy(): boolean {
     return this.value2;
   }
 
-  getTimestamp(): BigInt {
+  getStatus(): i32 {
     return this.value3;
   }
 
-  getOrderType(): i32 {
+  getTimestamp(): BigInt {
     return this.value4;
   }
 }
 
-export class NoctisExchange extends ethereum.SmartContract {
-  static bind(address: Address): NoctisExchange {
-    return new NoctisExchange("NoctisExchange", address);
+export class NoctisExchangeV2__tradeConfigsResult {
+  value0: boolean;
+  value1: Address;
+  value2: i32;
+  value3: boolean;
+  value4: BigInt;
+  value5: BigInt;
+  value6: BigInt;
+  value7: BigInt;
+
+  constructor(
+    value0: boolean,
+    value1: Address,
+    value2: i32,
+    value3: boolean,
+    value4: BigInt,
+    value5: BigInt,
+    value6: BigInt,
+    value7: BigInt,
+  ) {
+    this.value0 = value0;
+    this.value1 = value1;
+    this.value2 = value2;
+    this.value3 = value3;
+    this.value4 = value4;
+    this.value5 = value5;
+    this.value6 = value6;
+    this.value7 = value7;
+  }
+
+  toMap(): TypedMap<string, ethereum.Value> {
+    let map = new TypedMap<string, ethereum.Value>();
+    map.set("value0", ethereum.Value.fromBoolean(this.value0));
+    map.set("value1", ethereum.Value.fromAddress(this.value1));
+    map.set(
+      "value2",
+      ethereum.Value.fromUnsignedBigInt(BigInt.fromI32(this.value2)),
+    );
+    map.set("value3", ethereum.Value.fromBoolean(this.value3));
+    map.set("value4", ethereum.Value.fromUnsignedBigInt(this.value4));
+    map.set("value5", ethereum.Value.fromUnsignedBigInt(this.value5));
+    map.set("value6", ethereum.Value.fromUnsignedBigInt(this.value6));
+    map.set("value7", ethereum.Value.fromUnsignedBigInt(this.value7));
+    return map;
+  }
+
+  getEnabled(): boolean {
+    return this.value0;
+  }
+
+  getPriceFeed(): Address {
+    return this.value1;
+  }
+
+  getBaseDecimals(): i32 {
+    return this.value2;
+  }
+
+  getRouteViaWeth(): boolean {
+    return this.value3;
+  }
+
+  getMinOrderSize(): BigInt {
+    return this.value4;
+  }
+
+  getMaxOrderSize(): BigInt {
+    return this.value5;
+  }
+
+  getMinPriceUsd(): BigInt {
+    return this.value6;
+  }
+
+  getMaxPriceUsd(): BigInt {
+    return this.value7;
+  }
+}
+
+export class NoctisExchangeV2 extends ethereum.SmartContract {
+  static bind(address: Address): NoctisExchangeV2 {
+    return new NoctisExchangeV2("NoctisExchangeV2", address);
   }
 
   DEFAULT_ADMIN_ROLE(): Bytes {
@@ -650,44 +748,6 @@ export class NoctisExchange extends ethereum.SmartContract {
     return ethereum.CallResult.fromValue(value[0].toBytes());
   }
 
-  GATEWAY_ROLE(): Bytes {
-    let result = super.call("GATEWAY_ROLE", "GATEWAY_ROLE():(bytes32)", []);
-
-    return result[0].toBytes();
-  }
-
-  try_GATEWAY_ROLE(): ethereum.CallResult<Bytes> {
-    let result = super.tryCall("GATEWAY_ROLE", "GATEWAY_ROLE():(bytes32)", []);
-    if (result.reverted) {
-      return new ethereum.CallResult();
-    }
-    let value = result.value;
-    return ethereum.CallResult.fromValue(value[0].toBytes());
-  }
-
-  KEEPER_MANAGER_ROLE(): Bytes {
-    let result = super.call(
-      "KEEPER_MANAGER_ROLE",
-      "KEEPER_MANAGER_ROLE():(bytes32)",
-      [],
-    );
-
-    return result[0].toBytes();
-  }
-
-  try_KEEPER_MANAGER_ROLE(): ethereum.CallResult<Bytes> {
-    let result = super.tryCall(
-      "KEEPER_MANAGER_ROLE",
-      "KEEPER_MANAGER_ROLE():(bytes32)",
-      [],
-    );
-    if (result.reverted) {
-      return new ethereum.CallResult();
-    }
-    let value = result.value;
-    return ethereum.CallResult.fromValue(value[0].toBytes());
-  }
-
   MAX_FEE_BPS(): i32 {
     let result = super.call("MAX_FEE_BPS", "MAX_FEE_BPS():(uint16)", []);
 
@@ -701,6 +761,21 @@ export class NoctisExchange extends ethereum.SmartContract {
     }
     let value = result.value;
     return ethereum.CallResult.fromValue(value[0].toI32());
+  }
+
+  NATIVE(): Address {
+    let result = super.call("NATIVE", "NATIVE():(address)", []);
+
+    return result[0].toAddress();
+  }
+
+  try_NATIVE(): ethereum.CallResult<Address> {
+    let result = super.tryCall("NATIVE", "NATIVE():(address)", []);
+    if (result.reverted) {
+      return new ethereum.CallResult();
+    }
+    let value = result.value;
+    return ethereum.CallResult.fromValue(value[0].toAddress());
   }
 
   PARAMS_ROLE(): Bytes {
@@ -810,16 +885,18 @@ export class NoctisExchange extends ethereum.SmartContract {
   }
 
   createMarketOrder(
-    amountETH: BigInt,
+    baseToken: Address,
+    amountBase: BigInt,
     isBuy: boolean,
     slippageToleranceBPS: i32,
     maxPriceDeviationBPS: i32,
   ): BigInt {
     let result = super.call(
       "createMarketOrder",
-      "createMarketOrder(uint128,bool,uint16,uint16):(uint256)",
+      "createMarketOrder(address,uint128,bool,uint16,uint16):(uint256)",
       [
-        ethereum.Value.fromUnsignedBigInt(amountETH),
+        ethereum.Value.fromAddress(baseToken),
+        ethereum.Value.fromUnsignedBigInt(amountBase),
         ethereum.Value.fromBoolean(isBuy),
         ethereum.Value.fromUnsignedBigInt(BigInt.fromI32(slippageToleranceBPS)),
         ethereum.Value.fromUnsignedBigInt(BigInt.fromI32(maxPriceDeviationBPS)),
@@ -830,16 +907,18 @@ export class NoctisExchange extends ethereum.SmartContract {
   }
 
   try_createMarketOrder(
-    amountETH: BigInt,
+    baseToken: Address,
+    amountBase: BigInt,
     isBuy: boolean,
     slippageToleranceBPS: i32,
     maxPriceDeviationBPS: i32,
   ): ethereum.CallResult<BigInt> {
     let result = super.tryCall(
       "createMarketOrder",
-      "createMarketOrder(uint128,bool,uint16,uint16):(uint256)",
+      "createMarketOrder(address,uint128,bool,uint16,uint16):(uint256)",
       [
-        ethereum.Value.fromUnsignedBigInt(amountETH),
+        ethereum.Value.fromAddress(baseToken),
+        ethereum.Value.fromUnsignedBigInt(amountBase),
         ethereum.Value.fromBoolean(isBuy),
         ethereum.Value.fromUnsignedBigInt(BigInt.fromI32(slippageToleranceBPS)),
         ethereum.Value.fromUnsignedBigInt(BigInt.fromI32(maxPriceDeviationBPS)),
@@ -854,7 +933,8 @@ export class NoctisExchange extends ethereum.SmartContract {
 
   createMarketOrderViaRelayer(
     vaultId: BigInt,
-    amountETH: BigInt,
+    baseToken: Address,
+    amountBase: BigInt,
     isBuy: boolean,
     slippageToleranceBPS: i32,
     maxPriceDeviationBPS: i32,
@@ -862,10 +942,11 @@ export class NoctisExchange extends ethereum.SmartContract {
   ): BigInt {
     let result = super.call(
       "createMarketOrderViaRelayer",
-      "createMarketOrderViaRelayer(uint256,uint128,bool,uint16,uint16,uint128):(uint256)",
+      "createMarketOrderViaRelayer(uint256,address,uint128,bool,uint16,uint16,uint128):(uint256)",
       [
         ethereum.Value.fromUnsignedBigInt(vaultId),
-        ethereum.Value.fromUnsignedBigInt(amountETH),
+        ethereum.Value.fromAddress(baseToken),
+        ethereum.Value.fromUnsignedBigInt(amountBase),
         ethereum.Value.fromBoolean(isBuy),
         ethereum.Value.fromUnsignedBigInt(BigInt.fromI32(slippageToleranceBPS)),
         ethereum.Value.fromUnsignedBigInt(BigInt.fromI32(maxPriceDeviationBPS)),
@@ -878,7 +959,8 @@ export class NoctisExchange extends ethereum.SmartContract {
 
   try_createMarketOrderViaRelayer(
     vaultId: BigInt,
-    amountETH: BigInt,
+    baseToken: Address,
+    amountBase: BigInt,
     isBuy: boolean,
     slippageToleranceBPS: i32,
     maxPriceDeviationBPS: i32,
@@ -886,10 +968,11 @@ export class NoctisExchange extends ethereum.SmartContract {
   ): ethereum.CallResult<BigInt> {
     let result = super.tryCall(
       "createMarketOrderViaRelayer",
-      "createMarketOrderViaRelayer(uint256,uint128,bool,uint16,uint16,uint128):(uint256)",
+      "createMarketOrderViaRelayer(uint256,address,uint128,bool,uint16,uint16,uint128):(uint256)",
       [
         ethereum.Value.fromUnsignedBigInt(vaultId),
-        ethereum.Value.fromUnsignedBigInt(amountETH),
+        ethereum.Value.fromAddress(baseToken),
+        ethereum.Value.fromUnsignedBigInt(amountBase),
         ethereum.Value.fromBoolean(isBuy),
         ethereum.Value.fromUnsignedBigInt(BigInt.fromI32(slippageToleranceBPS)),
         ethereum.Value.fromUnsignedBigInt(BigInt.fromI32(maxPriceDeviationBPS)),
@@ -956,6 +1039,21 @@ export class NoctisExchange extends ethereum.SmartContract {
     return ethereum.CallResult.fromValue(value[0].toAddress());
   }
 
+  gasRecipient(): Address {
+    let result = super.call("gasRecipient", "gasRecipient():(address)", []);
+
+    return result[0].toAddress();
+  }
+
+  try_gasRecipient(): ethereum.CallResult<Address> {
+    let result = super.tryCall("gasRecipient", "gasRecipient():(address)", []);
+    if (result.reverted) {
+      return new ethereum.CallResult();
+    }
+    let value = result.value;
+    return ethereum.CallResult.fromValue(value[0].toAddress());
+  }
+
   gateway(): Address {
     let result = super.call("gateway", "gateway():(address)", []);
 
@@ -971,24 +1069,24 @@ export class NoctisExchange extends ethereum.SmartContract {
     return ethereum.CallResult.fromValue(value[0].toAddress());
   }
 
-  getMyOrder(orderId: BigInt): NoctisExchange__getMyOrderResultValue0Struct {
+  getMyOrder(orderId: BigInt): NoctisExchangeV2__getMyOrderResultValue0Struct {
     let result = super.call(
       "getMyOrder",
-      "getMyOrder(uint256):((uint256,bytes32,bytes32,bytes32,bool,uint256,uint8,uint8,uint16,uint256,uint16))",
+      "getMyOrder(uint256):((uint256,address,bytes32,bytes32,bool,uint256,uint8,uint16,uint256,uint16))",
       [ethereum.Value.fromUnsignedBigInt(orderId)],
     );
 
-    return changetype<NoctisExchange__getMyOrderResultValue0Struct>(
+    return changetype<NoctisExchangeV2__getMyOrderResultValue0Struct>(
       result[0].toTuple(),
     );
   }
 
   try_getMyOrder(
     orderId: BigInt,
-  ): ethereum.CallResult<NoctisExchange__getMyOrderResultValue0Struct> {
+  ): ethereum.CallResult<NoctisExchangeV2__getMyOrderResultValue0Struct> {
     let result = super.tryCall(
       "getMyOrder",
-      "getMyOrder(uint256):((uint256,bytes32,bytes32,bytes32,bool,uint256,uint8,uint8,uint16,uint256,uint16))",
+      "getMyOrder(uint256):((uint256,address,bytes32,bytes32,bool,uint256,uint8,uint16,uint256,uint16))",
       [ethereum.Value.fromUnsignedBigInt(orderId)],
     );
     if (result.reverted) {
@@ -996,34 +1094,34 @@ export class NoctisExchange extends ethereum.SmartContract {
     }
     let value = result.value;
     return ethereum.CallResult.fromValue(
-      changetype<NoctisExchange__getMyOrderResultValue0Struct>(
+      changetype<NoctisExchangeV2__getMyOrderResultValue0Struct>(
         value[0].toTuple(),
       ),
     );
   }
 
-  getOrderPublic(orderId: BigInt): NoctisExchange__getOrderPublicResult {
+  getOrderPublic(orderId: BigInt): NoctisExchangeV2__getOrderPublicResult {
     let result = super.call(
       "getOrderPublic",
-      "getOrderPublic(uint256):(bool,bool,uint8,uint256,uint8)",
+      "getOrderPublic(uint256):(bool,address,bool,uint8,uint256)",
       [ethereum.Value.fromUnsignedBigInt(orderId)],
     );
 
-    return new NoctisExchange__getOrderPublicResult(
+    return new NoctisExchangeV2__getOrderPublicResult(
       result[0].toBoolean(),
-      result[1].toBoolean(),
-      result[2].toI32(),
-      result[3].toBigInt(),
-      result[4].toI32(),
+      result[1].toAddress(),
+      result[2].toBoolean(),
+      result[3].toI32(),
+      result[4].toBigInt(),
     );
   }
 
   try_getOrderPublic(
     orderId: BigInt,
-  ): ethereum.CallResult<NoctisExchange__getOrderPublicResult> {
+  ): ethereum.CallResult<NoctisExchangeV2__getOrderPublicResult> {
     let result = super.tryCall(
       "getOrderPublic",
-      "getOrderPublic(uint256):(bool,bool,uint8,uint256,uint8)",
+      "getOrderPublic(uint256):(bool,address,bool,uint8,uint256)",
       [ethereum.Value.fromUnsignedBigInt(orderId)],
     );
     if (result.reverted) {
@@ -1031,12 +1129,12 @@ export class NoctisExchange extends ethereum.SmartContract {
     }
     let value = result.value;
     return ethereum.CallResult.fromValue(
-      new NoctisExchange__getOrderPublicResult(
+      new NoctisExchangeV2__getOrderPublicResult(
         value[0].toBoolean(),
-        value[1].toBoolean(),
-        value[2].toI32(),
-        value[3].toBigInt(),
-        value[4].toI32(),
+        value[1].toAddress(),
+        value[2].toBoolean(),
+        value[3].toI32(),
+        value[4].toBigInt(),
       ),
     );
   }
@@ -1060,6 +1158,29 @@ export class NoctisExchange extends ethereum.SmartContract {
     }
     let value = result.value;
     return ethereum.CallResult.fromValue(value[0].toBytes());
+  }
+
+  getTradableTokens(): Array<Address> {
+    let result = super.call(
+      "getTradableTokens",
+      "getTradableTokens():(address[])",
+      [],
+    );
+
+    return result[0].toAddressArray();
+  }
+
+  try_getTradableTokens(): ethereum.CallResult<Array<Address>> {
+    let result = super.tryCall(
+      "getTradableTokens",
+      "getTradableTokens():(address[])",
+      [],
+    );
+    if (result.reverted) {
+      return new ethereum.CallResult();
+    }
+    let value = result.value;
+    return ethereum.CallResult.fromValue(value[0].toAddressArray());
   }
 
   hasRole(role: Bytes, account: Address): boolean {
@@ -1129,21 +1250,6 @@ export class NoctisExchange extends ethereum.SmartContract {
     return ethereum.CallResult.fromValue(value[0].toBigInt());
   }
 
-  maxOrderSize(): BigInt {
-    let result = super.call("maxOrderSize", "maxOrderSize():(uint256)", []);
-
-    return result[0].toBigInt();
-  }
-
-  try_maxOrderSize(): ethereum.CallResult<BigInt> {
-    let result = super.tryCall("maxOrderSize", "maxOrderSize():(uint256)", []);
-    if (result.reverted) {
-      return new ethereum.CallResult();
-    }
-    let value = result.value;
-    return ethereum.CallResult.fromValue(value[0].toBigInt());
-  }
-
   maxOrdersPerBlock(): BigInt {
     let result = super.call(
       "maxOrdersPerBlock",
@@ -1160,21 +1266,6 @@ export class NoctisExchange extends ethereum.SmartContract {
       "maxOrdersPerBlock():(uint256)",
       [],
     );
-    if (result.reverted) {
-      return new ethereum.CallResult();
-    }
-    let value = result.value;
-    return ethereum.CallResult.fromValue(value[0].toBigInt());
-  }
-
-  minOrderSize(): BigInt {
-    let result = super.call("minOrderSize", "minOrderSize():(uint256)", []);
-
-    return result[0].toBigInt();
-  }
-
-  try_minOrderSize(): ethereum.CallResult<BigInt> {
-    let result = super.tryCall("minOrderSize", "minOrderSize():(uint256)", []);
     if (result.reverted) {
       return new ethereum.CallResult();
     }
@@ -1212,20 +1303,20 @@ export class NoctisExchange extends ethereum.SmartContract {
     return ethereum.CallResult.fromValue(value[0].toBoolean());
   }
 
-  pendingBuyUsdtAmount(param0: BigInt): BigInt {
+  pendingBuyUsdcAmount(param0: BigInt): BigInt {
     let result = super.call(
-      "pendingBuyUsdtAmount",
-      "pendingBuyUsdtAmount(uint256):(uint256)",
+      "pendingBuyUsdcAmount",
+      "pendingBuyUsdcAmount(uint256):(uint256)",
       [ethereum.Value.fromUnsignedBigInt(param0)],
     );
 
     return result[0].toBigInt();
   }
 
-  try_pendingBuyUsdtAmount(param0: BigInt): ethereum.CallResult<BigInt> {
+  try_pendingBuyUsdcAmount(param0: BigInt): ethereum.CallResult<BigInt> {
     let result = super.tryCall(
-      "pendingBuyUsdtAmount",
-      "pendingBuyUsdtAmount(uint256):(uint256)",
+      "pendingBuyUsdcAmount",
+      "pendingBuyUsdcAmount(uint256):(uint256)",
       [ethereum.Value.fromUnsignedBigInt(param0)],
     );
     if (result.reverted) {
@@ -1365,6 +1456,51 @@ export class NoctisExchange extends ethereum.SmartContract {
     return ethereum.CallResult.fromValue(value[0].toBoolean());
   }
 
+  tradeConfigs(param0: Address): NoctisExchangeV2__tradeConfigsResult {
+    let result = super.call(
+      "tradeConfigs",
+      "tradeConfigs(address):(bool,address,uint8,bool,uint128,uint128,uint128,uint128)",
+      [ethereum.Value.fromAddress(param0)],
+    );
+
+    return new NoctisExchangeV2__tradeConfigsResult(
+      result[0].toBoolean(),
+      result[1].toAddress(),
+      result[2].toI32(),
+      result[3].toBoolean(),
+      result[4].toBigInt(),
+      result[5].toBigInt(),
+      result[6].toBigInt(),
+      result[7].toBigInt(),
+    );
+  }
+
+  try_tradeConfigs(
+    param0: Address,
+  ): ethereum.CallResult<NoctisExchangeV2__tradeConfigsResult> {
+    let result = super.tryCall(
+      "tradeConfigs",
+      "tradeConfigs(address):(bool,address,uint8,bool,uint128,uint128,uint128,uint128)",
+      [ethereum.Value.fromAddress(param0)],
+    );
+    if (result.reverted) {
+      return new ethereum.CallResult();
+    }
+    let value = result.value;
+    return ethereum.CallResult.fromValue(
+      new NoctisExchangeV2__tradeConfigsResult(
+        value[0].toBoolean(),
+        value[1].toAddress(),
+        value[2].toI32(),
+        value[3].toBoolean(),
+        value[4].toBigInt(),
+        value[5].toBigInt(),
+        value[6].toBigInt(),
+        value[7].toBigInt(),
+      ),
+    );
+  }
+
   uniswapRouter(): Address {
     let result = super.call("uniswapRouter", "uniswapRouter():(address)", []);
 
@@ -1377,6 +1513,21 @@ export class NoctisExchange extends ethereum.SmartContract {
       "uniswapRouter():(address)",
       [],
     );
+    if (result.reverted) {
+      return new ethereum.CallResult();
+    }
+    let value = result.value;
+    return ethereum.CallResult.fromValue(value[0].toAddress());
+  }
+
+  usdc(): Address {
+    let result = super.call("usdc", "usdc():(address)", []);
+
+    return result[0].toAddress();
+  }
+
+  try_usdc(): ethereum.CallResult<Address> {
+    let result = super.tryCall("usdc", "usdc():(address)", []);
     if (result.reverted) {
       return new ethereum.CallResult();
     }
@@ -1425,12 +1576,16 @@ export class ConstructorCall__Inputs {
     return this._call.inputValues[1].value.toAddress();
   }
 
-  get _ethUsdPriceFeed(): Address {
+  get _usdc(): Address {
     return this._call.inputValues[2].value.toAddress();
   }
 
-  get _sequencerUptimeFeed(): Address {
+  get _ethUsdPriceFeed(): Address {
     return this._call.inputValues[3].value.toAddress();
+  }
+
+  get _sequencerUptimeFeed(): Address {
+    return this._call.inputValues[4].value.toAddress();
   }
 }
 
@@ -1562,6 +1717,64 @@ export class CancelSwapExecutionViaRelayerCall__Outputs {
   }
 }
 
+export class ConfigureTradableTokenCall extends ethereum.Call {
+  get inputs(): ConfigureTradableTokenCall__Inputs {
+    return new ConfigureTradableTokenCall__Inputs(this);
+  }
+
+  get outputs(): ConfigureTradableTokenCall__Outputs {
+    return new ConfigureTradableTokenCall__Outputs(this);
+  }
+}
+
+export class ConfigureTradableTokenCall__Inputs {
+  _call: ConfigureTradableTokenCall;
+
+  constructor(call: ConfigureTradableTokenCall) {
+    this._call = call;
+  }
+
+  get baseToken(): Address {
+    return this._call.inputValues[0].value.toAddress();
+  }
+
+  get priceFeed(): Address {
+    return this._call.inputValues[1].value.toAddress();
+  }
+
+  get baseDecimals(): i32 {
+    return this._call.inputValues[2].value.toI32();
+  }
+
+  get routeViaWeth(): boolean {
+    return this._call.inputValues[3].value.toBoolean();
+  }
+
+  get minOrderSize(): BigInt {
+    return this._call.inputValues[4].value.toBigInt();
+  }
+
+  get maxOrderSize(): BigInt {
+    return this._call.inputValues[5].value.toBigInt();
+  }
+
+  get minPriceUsd(): BigInt {
+    return this._call.inputValues[6].value.toBigInt();
+  }
+
+  get maxPriceUsd(): BigInt {
+    return this._call.inputValues[7].value.toBigInt();
+  }
+}
+
+export class ConfigureTradableTokenCall__Outputs {
+  _call: ConfigureTradableTokenCall;
+
+  constructor(call: ConfigureTradableTokenCall) {
+    this._call = call;
+  }
+}
+
 export class CreateMarketOrderCall extends ethereum.Call {
   get inputs(): CreateMarketOrderCall__Inputs {
     return new CreateMarketOrderCall__Inputs(this);
@@ -1579,20 +1792,24 @@ export class CreateMarketOrderCall__Inputs {
     this._call = call;
   }
 
-  get amountETH(): BigInt {
-    return this._call.inputValues[0].value.toBigInt();
+  get baseToken(): Address {
+    return this._call.inputValues[0].value.toAddress();
+  }
+
+  get amountBase(): BigInt {
+    return this._call.inputValues[1].value.toBigInt();
   }
 
   get isBuy(): boolean {
-    return this._call.inputValues[1].value.toBoolean();
+    return this._call.inputValues[2].value.toBoolean();
   }
 
   get slippageToleranceBPS(): i32 {
-    return this._call.inputValues[2].value.toI32();
+    return this._call.inputValues[3].value.toI32();
   }
 
   get maxPriceDeviationBPS(): i32 {
-    return this._call.inputValues[3].value.toI32();
+    return this._call.inputValues[4].value.toI32();
   }
 }
 
@@ -1629,24 +1846,28 @@ export class CreateMarketOrderViaRelayerCall__Inputs {
     return this._call.inputValues[0].value.toBigInt();
   }
 
-  get amountETH(): BigInt {
-    return this._call.inputValues[1].value.toBigInt();
+  get baseToken(): Address {
+    return this._call.inputValues[1].value.toAddress();
+  }
+
+  get amountBase(): BigInt {
+    return this._call.inputValues[2].value.toBigInt();
   }
 
   get isBuy(): boolean {
-    return this._call.inputValues[2].value.toBoolean();
+    return this._call.inputValues[3].value.toBoolean();
   }
 
   get slippageToleranceBPS(): i32 {
-    return this._call.inputValues[3].value.toI32();
-  }
-
-  get maxPriceDeviationBPS(): i32 {
     return this._call.inputValues[4].value.toI32();
   }
 
+  get maxPriceDeviationBPS(): i32 {
+    return this._call.inputValues[5].value.toI32();
+  }
+
   get gasRefundWei(): BigInt {
-    return this._call.inputValues[5].value.toBigInt();
+    return this._call.inputValues[6].value.toBigInt();
   }
 }
 
@@ -1694,10 +1915,6 @@ export class ExecuteSwapCallbackCall__Inputs {
   get minAmountOut(): BigInt {
     return this._call.inputValues[3].value.toBigInt();
   }
-
-  get poolFee(): i32 {
-    return this._call.inputValues[4].value.toI32();
-  }
 }
 
 export class ExecuteSwapCallbackCall__Outputs {
@@ -1737,16 +1954,12 @@ export class ExecuteSwapViaRelayerCall__Inputs {
     return this._call.inputValues[2].value.toBigInt();
   }
 
-  get poolFee(): i32 {
-    return this._call.inputValues[3].value.toI32();
-  }
-
   get cleartexts(): Bytes {
-    return this._call.inputValues[4].value.toBytes();
+    return this._call.inputValues[3].value.toBytes();
   }
 
   get decryptionProof(): Bytes {
-    return this._call.inputValues[5].value.toBytes();
+    return this._call.inputValues[4].value.toBytes();
   }
 }
 
@@ -1789,10 +2002,6 @@ export class FinalizeBuySwapCall__Inputs {
 
   get minAmountOut(): BigInt {
     return this._call.inputValues[3].value.toBigInt();
-  }
-
-  get poolFee(): i32 {
-    return this._call.inputValues[4].value.toI32();
   }
 }
 
@@ -2090,32 +2299,32 @@ export class SetFeeRecipientCall__Outputs {
   }
 }
 
-export class SetGatewayCall extends ethereum.Call {
-  get inputs(): SetGatewayCall__Inputs {
-    return new SetGatewayCall__Inputs(this);
+export class SetGasRecipientCall extends ethereum.Call {
+  get inputs(): SetGasRecipientCall__Inputs {
+    return new SetGasRecipientCall__Inputs(this);
   }
 
-  get outputs(): SetGatewayCall__Outputs {
-    return new SetGatewayCall__Outputs(this);
+  get outputs(): SetGasRecipientCall__Outputs {
+    return new SetGasRecipientCall__Outputs(this);
   }
 }
 
-export class SetGatewayCall__Inputs {
-  _call: SetGatewayCall;
+export class SetGasRecipientCall__Inputs {
+  _call: SetGasRecipientCall;
 
-  constructor(call: SetGatewayCall) {
+  constructor(call: SetGasRecipientCall) {
     this._call = call;
   }
 
-  get _gateway(): Address {
+  get newRecipient(): Address {
     return this._call.inputValues[0].value.toAddress();
   }
 }
 
-export class SetGatewayCall__Outputs {
-  _call: SetGatewayCall;
+export class SetGasRecipientCall__Outputs {
+  _call: SetGasRecipientCall;
 
-  constructor(call: SetGatewayCall) {
+  constructor(call: SetGasRecipientCall) {
     this._call = call;
   }
 }
@@ -2180,40 +2389,6 @@ export class SetMaxOrdersPerBlockCall__Outputs {
   }
 }
 
-export class SetOrderSizeLimitsCall extends ethereum.Call {
-  get inputs(): SetOrderSizeLimitsCall__Inputs {
-    return new SetOrderSizeLimitsCall__Inputs(this);
-  }
-
-  get outputs(): SetOrderSizeLimitsCall__Outputs {
-    return new SetOrderSizeLimitsCall__Outputs(this);
-  }
-}
-
-export class SetOrderSizeLimitsCall__Inputs {
-  _call: SetOrderSizeLimitsCall;
-
-  constructor(call: SetOrderSizeLimitsCall) {
-    this._call = call;
-  }
-
-  get _minSize(): BigInt {
-    return this._call.inputValues[0].value.toBigInt();
-  }
-
-  get _maxSize(): BigInt {
-    return this._call.inputValues[1].value.toBigInt();
-  }
-}
-
-export class SetOrderSizeLimitsCall__Outputs {
-  _call: SetOrderSizeLimitsCall;
-
-  constructor(call: SetOrderSizeLimitsCall) {
-    this._call = call;
-  }
-}
-
 export class SetTimelockCall extends ethereum.Call {
   get inputs(): SetTimelockCall__Inputs {
     return new SetTimelockCall__Inputs(this);
@@ -2240,6 +2415,40 @@ export class SetTimelockCall__Outputs {
   _call: SetTimelockCall;
 
   constructor(call: SetTimelockCall) {
+    this._call = call;
+  }
+}
+
+export class SetTokenTradingEnabledCall extends ethereum.Call {
+  get inputs(): SetTokenTradingEnabledCall__Inputs {
+    return new SetTokenTradingEnabledCall__Inputs(this);
+  }
+
+  get outputs(): SetTokenTradingEnabledCall__Outputs {
+    return new SetTokenTradingEnabledCall__Outputs(this);
+  }
+}
+
+export class SetTokenTradingEnabledCall__Inputs {
+  _call: SetTokenTradingEnabledCall;
+
+  constructor(call: SetTokenTradingEnabledCall) {
+    this._call = call;
+  }
+
+  get baseToken(): Address {
+    return this._call.inputValues[0].value.toAddress();
+  }
+
+  get enabled(): boolean {
+    return this._call.inputValues[1].value.toBoolean();
+  }
+}
+
+export class SetTokenTradingEnabledCall__Outputs {
+  _call: SetTokenTradingEnabledCall;
+
+  constructor(call: SetTokenTradingEnabledCall) {
     this._call = call;
   }
 }
