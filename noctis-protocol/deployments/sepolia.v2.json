@@ -13,5 +13,68 @@
     "gasRecipient": "0xB63063402eD60d4630bc575dEC5458CDB94d16D6",
     "feeBps": 5
   },
-  "notes": "V2 SSOT (multi-token). Live V1 SSOT stays canonical until cutover. gasRecipient = relayer float wallet: gas refunds are paid there at settlement (no Safe round-trip)."
+  "notes": "V2 SSOT (multi-token). Live V1 SSOT stays canonical until cutover. gasRecipient = relayer float wallet: gas refunds are paid there at settlement (no Safe round-trip).",
+  "tokens": {
+    "nWBTC": {
+      "address": "0x93B0f4E17F2DE11D045b958eb8Ac914D2824F937",
+      "symbol": "nWBTC",
+      "decimals": 8,
+      "feed": "0x1b44F3514812d835EB1BDB0acB33d3fA3351Ee43",
+      "note": "Pilot token, open mint() = public testnet faucet",
+      "poolSeeded": true,
+      "poolUsdc": 3000,
+      "poolSeedTx": "0x295c283c71588e1cfddb454773519e5400c425afcae6d8c53ba7364edfe36cec",
+      "vaultConfigured": true,
+      "exchangeConfigured": true,
+      "minOrderBase": "1543",
+      "maxOrderBase": "92580"
+    },
+    "nLINK": {
+      "address": "0xA09EC0B0A6b0387DFbF0e14a18572BDb54cd8913",
+      "symbol": "nLINK",
+      "decimals": 18,
+      "feed": "0xc59E3633BAAC79493d908e63626716e204A45EdF",
+      "note": "Pilot token, open mint() = public testnet faucet",
+      "poolSeeded": true,
+      "poolUsdc": 1500,
+      "poolSeedTx": "0x90a85c0845018d4e64f8e501c47a2c6dc740c75ef48cd1e5900e0e4749353d5e",
+      "vaultConfigured": true,
+      "exchangeConfigured": true,
+      "minOrderBase": "120584933394912039",
+      "maxOrderBase": "7235096003694722359"
+    },
+    "nDAI": {
+      "address": "0xFeaD8B309127f48Ec8028927d8a3c4Fcda50031D",
+      "symbol": "nDAI",
+      "decimals": 18,
+      "feed": "0x14866185B1962B63C3Ea9E03Bc1da838bab34C19",
+      "note": "Pilot token, open mint() = public testnet faucet",
+      "poolSeeded": true,
+      "poolUsdc": 1500,
+      "poolSeedTx": "0xb865fa032bfff1cc5146bc33be0c53017e0c29dcd57e92222e3bbce65f5f24c3",
+      "vaultConfigured": true,
+      "exchangeConfigured": true,
+      "minOrderBase": "1000414862039139010",
+      "maxOrderBase": "60024891722348340633"
+    },
+    "nEUR": {
+      "address": "0x16D59db09a000882a9EA2EEd5c4D1CF70563E432",
+      "symbol": "nEUR",
+      "decimals": 6,
+      "feed": "0x1a81afB8146aeFfCFc5E50e8479e826E7D55b910",
+      "note": "Pilot token, open mint() = public testnet faucet",
+      "poolSeeded": true,
+      "poolUsdc": 1500,
+      "poolSeedTx": "0x6d6a9e51c45ff4ad43cad0529e33017560260023690d856722f174f57a5a1213",
+      "vaultConfigured": true,
+      "exchangeConfigured": true,
+      "minOrderBase": "864842",
+      "maxOrderBase": "51890545"
+    }
+  },
+  "ops": {
+    "relayer": "0xB63063402eD60d4630bc575dEC5458CDB94d16D6",
+    "timelock": "0x6fa358E424341F60338620f26AB297553E551A7D",
+    "timelockConfiguredAt": "2026-08-09T07:20:25.073Z"
+  }
 }
